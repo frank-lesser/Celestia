@@ -14,6 +14,7 @@
 #include <string>
 #include <iostream>
 #include <celmath/ray.h>
+#include <celengine/object.h>
 #include <celengine/glcontext.h>
 #include <celengine/parser.h>
 #include <Eigen/Core>
@@ -26,7 +27,7 @@ class Galaxy;
 class Globular;
 class OpenCluster;
 
-class DeepSkyObject
+class DeepSkyObject : public Object
 {
  public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW

@@ -13,6 +13,7 @@
 
 #include <celutil/reshandle.h>
 #include <celutil/color.h>
+#include <celengine/object.h>
 #include <celengine/univcoord.h>
 #include <celengine/celestia.h>
 #include <celengine/stellarclass.h>
@@ -233,7 +234,7 @@ StarDetails::hasCorona() const
 
 
 
-class Star
+class Star : public Object
 {
 public:
     Star() = default;

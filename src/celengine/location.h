@@ -11,12 +11,13 @@
 #define _CELENGINE_LOCATION_H_
 
 #include <string>
+#include <celengine/object.h>
 #include <celutil/color.h>
 #include <Eigen/Core>
 
 class Body;
 
-class Location
+class Location : public Object
 {
  public:
     std::string getName(bool i18n = false) const;

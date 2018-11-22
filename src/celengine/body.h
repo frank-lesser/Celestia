@@ -10,6 +10,7 @@
 #ifndef _CELENGINE_BODY_H_
 #define _CELENGINE_BODY_H_
 
+#include <celengine/object.h>
 #include <celengine/surface.h>
 #include <celengine/star.h>
 #include <celengine/location.h>
@@ -103,7 +104,7 @@ class RingSystem
 };
 
 
-class Body
+class Body : public Object
 {
  public:
      EIGEN_MAKE_ALIGNED_OPERATOR_NEW
