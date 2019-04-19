@@ -488,6 +488,7 @@ int main(int argc, char* argv[])
 
     if (!appCore->initSimulation())
     {
+        cerr << "Error initializing simulation.\n";
         return 1;
     }
 
@@ -522,6 +523,8 @@ int main(int argc, char* argv[])
 
     // GL should be all set up, now initialize the renderer.
     appCore->initRenderer();
+
+    appCore->getRenderer()->setSolarSystemMaxDistance(appCore->getConfig()->SolarSystemMaxDistance);
 
     // Set the simulation starting time to the current system time
     time_t curtime = time(nullptr);

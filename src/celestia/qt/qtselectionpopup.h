@@ -15,6 +15,7 @@
 
 #include <QMenu>
 #include <celengine/selection.h>
+#include <celengine/body.h>
 
 class CelestiaCore;
 
@@ -37,6 +38,7 @@ Q_OBJECT
     void slotSelectAlternateSurface();
     void slotSelectChildObject();
     void slotMark();
+    void slotUnmark();
     void slotToggleBodyAxes();
     void slotToggleFrameAxes();
     void slotToggleSunDirection();

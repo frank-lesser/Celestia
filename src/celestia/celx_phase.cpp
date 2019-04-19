@@ -13,9 +13,8 @@
 #include "celx_internal.h"
 #include "celx_phase.h"
 #include <celengine/timelinephase.h>
-#ifdef __CELVEC__
-#include <celengine/eigenport.h>
-#endif
+#include <celephem/orbit.h>
+#include <celephem/rotation.h>
 
 
 // We want to avoid copying TimelinePhase objects, so we can't make them
@@ -188,11 +187,7 @@ static int phase_getorientation(lua_State* l)
         tdb = phase->startTime();
     else if (tdb > phase->endTime())
         tdb = phase->endTime();
-#ifdef __CELVEC__
-    celx.newRotation(fromEigen(phase->rotationModel()->orientationAtTime(tdb)));
-#else
     celx.newRotation(phase->rotationModel()->orientationAtTime(tdb));
-#endif
 
     return 1;
 }

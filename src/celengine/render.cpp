@@ -36,12 +36,7 @@ std::ofstream hdrlog;
 
 // #define ENABLE_SELF_SHADOW
 
-#ifndef _WIN32
-#ifndef TARGET_OS_MAC
 #include <config.h>
-#endif
-#endif /* _WIN32 */
-
 #include "render.h"
 #include "boundaries.h"
 #include "asterism.h"
@@ -87,9 +82,6 @@ std::ofstream hdrlog;
 #include <sstream>
 #include <iomanip>
 #include <numeric>
-#ifdef __CELVEC__
-#include "eigenport.h"
-#endif
 
 using namespace cmod;
 using namespace Eigen;
@@ -153,12 +145,6 @@ static const float MaxAsterismLinesConstDist   = 600.0f;
    asterisms labels and lines fade out completely (in light years) */
 static const float MaxAsterismLabelsDist = 20.0f;
 static const float MaxAsterismLinesDist  = 6.52e4f;
-
-// Maximum size of a solar system in light years. Features beyond this distance
-// will not necessarily be rendered correctly. This limit is used for
-// visibility culling of solar systems.
-static const float MaxSolarSystemSize = 1.0f;
-
 
 // Static meshes and textures used by all instances of Simulation
 
@@ -292,7 +278,7 @@ double computeCosViewConeAngle(double verticalFOV, double width, double height)
 class PointStarVertexBuffer
 {
 public:
-    PointStarVertexBuffer(unsigned int _capacity);
+    PointStarVertexBuffer(const Renderer& _renderer, unsigned int _capacity);
     ~PointStarVertexBuffer();
     void startPoints();
     void startSprites();
@@ -310,6 +296,7 @@ private:
         float pad;
     };
 
+    const Renderer& renderer;
     unsigned int capacity;
     unsigned int nStars{ 0 };
     StarVertex* vertices{ nullptr };
@@ -317,7 +304,9 @@ private:
     Texture* texture{ nullptr };
 };
 
-PointStarVertexBuffer::PointStarVertexBuffer(unsigned int _capacity) :
+PointStarVertexBuffer::PointStarVertexBuffer(const Renderer& _renderer,
+                                             unsigned int _capacity) :
+    renderer(_renderer),
     capacity(_capacity)
 {
     vertices = new StarVertex[capacity];
@@ -334,7 +323,7 @@ void PointStarVertexBuffer::startSprites()
     shadprop.staticShader = true;
     shadprop.texUsage = ShaderProperties::PointSprite   |
                         ShaderProperties::NormalTexture;
-    CelestiaGLProgram* prog = GetShaderManager().getShader(shadprop);
+    CelestiaGLProgram* prog = renderer.getShaderManager().getShader(shadprop);
     if (prog == nullptr)
         return;
 
@@ -461,7 +450,6 @@ void PointStarVertexBuffer::setTexture(Texture* _texture)
 
 
 Renderer::Renderer() :
-    context(0),
     windowWidth(0),
     windowHeight(0),
     fov(FOV),
@@ -502,8 +490,8 @@ Renderer::Renderer() :
     settingsChanged(true),
     objectAnnotationSetOpen(false)
 {
-    pointStarVertexBuffer = new PointStarVertexBuffer(2048);
-    glareVertexBuffer = new PointStarVertexBuffer(2048);
+    pointStarVertexBuffer = new PointStarVertexBuffer(*this, 2048);
+    glareVertexBuffer = new PointStarVertexBuffer(*this, 2048);
     skyVertices = new SkyVertex[MaxSkySlices * (MaxSkyRings + 1)];
     skyIndices = new uint32_t[(MaxSkySlices + 1) * 2 * MaxSkyRings];
     skyContour = new SkyContourPoint[MaxSkySlices + 1];
@@ -530,6 +518,8 @@ Renderer::Renderer() :
     {
         font[i] = nullptr;
     }
+
+    shaderManager = new ShaderManager();
 }
 
 
@@ -568,6 +558,8 @@ Renderer::~Renderer()
 
     for(const auto tex : eclipseShadowTextures)
         delete tex;
+
+    delete shaderManager;
 }
 
 
@@ -1323,7 +1315,7 @@ void Renderer::addAnnotation(vector<Annotation>& annotations,
         }
         else
         {
-            a.labelText = ReplaceGreekLetterAbbr(labelText);
+            a.labelText = labelText;
         }
         a.markerRep = markerRep;
         a.color = color;
@@ -1783,7 +1775,7 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
         double windowStart = windowEnd - period * OrbitPeriodsShown;
         double windowDuration = windowEnd - windowStart;
 
-        if (LinearFadeFraction == 0.0f)
+        if (LinearFadeFraction == 0.0f || (renderFlags & ShowFadingOrbits) == 0)
         {
             cachedOrbit->render(modelview,
                                 nearZ, farZ, viewFrustumPlaneNormals,
@@ -2560,7 +2552,7 @@ void Renderer::draw(const Observer& observer,
     if ((renderFlags & ShowSSO) != 0)
     {
         nearStars.clear();
-        universe.getNearStars(observer.getPosition(), 1.0f, nearStars);
+        universe.getNearStars(observer.getPosition(), SolarSystemMaxDistance, nearStars);
 
         // Set up direct light sources (i.e. just stars at the moment)
         setupLightSources(nearStars, observer.getPosition(), now, lightSourceList, renderFlags);
@@ -2616,11 +2608,7 @@ void Renderer::draw(const Observer& observer,
     setupSecondaryLightSources(secondaryIlluminators, lightSourceList);
 
 #ifdef USE_HDR
-#ifdef __CELVEC__
-    Mat3f viewMat = conjugate(observer.getOrientationf()).toMatrix3();
-#else
     Matrix3f viewMat = observer.getOrientationf().conjugate().toRotationMatrix();
-#endif
     float maxSpan = (float) sqrt(square((float) windowWidth) +
                                  square((float) windowHeight));
     float nearZcoeff = (float) cos(degToRad(fov / 2)) *
@@ -2631,11 +2619,7 @@ void Renderer::draw(const Observer& observer,
     auto notCulled = renderList.begin();
     for (const auto& render_item : renderList)
     {
-#ifdef __CELVEC__
-        Point3f center = render_item.position * viewMat;
-#else
-        Vector3f center = render_item.position * viewMat;
-#endif
+        Vector3f center = viewMat * render_item.position;
 
         bool convex = true;
         float radius = 1.0f;
@@ -2679,11 +2663,7 @@ void Renderer::draw(const Observer& observer,
         // Test the object's bounding sphere against the view frustum
         if (frustum.testSphere(center, cullRadius) != Frustum::Outside)
         {
-#ifdef __CELVEC__
-            float nearZ = center.distanceFromOrigin() - radius;
-#else
             float nearZ = center.norm() - radius;
-#endif
             nearZ = -nearZ * nearZcoeff;
 
             if (nearZ > -MinNearPlaneDistance)
@@ -2693,22 +2673,14 @@ void Renderer::draw(const Observer& observer,
 
             if (!convex)
             {
-#ifdef __CELVEC__
-                render_item.farZ = center.z - radius;
-#else
                 render_item.farZ = center.z() - radius;
-#endif
                 if (render_item.farZ / render_item.nearZ > MaxFarNearRatio * 0.5f)
                     render_item.nearZ = render_item.farZ / (MaxFarNearRatio * 0.5f);
             }
             else
             {
                 // Make the far plane as close as possible
-#ifdef __CELVEC__
-                float d = center.distanceFromOrigin();
-#else
                 float d = center.norm();
-#endif
                 // Account for ellipsoidal objects
                 float eradius = radius;
                 if (render_item.body != nullptr) // XXX: not checked before
@@ -3165,27 +3137,16 @@ void Renderer::draw(const Observer& observer,
         {
             const Body *body = closestBody->body;
             double scale = astro::microLightYearsToKilometers(1.0);
-#ifdef __CELVEC__
-            Point3d posBody = body->getAstrocentricPosition(now);
-            Point3d posStar;
-            Point3d posEye = astrocentricPosition(observer.getPosition(), *brightestStar, now);
-#else
             Vector3d posBody = body->getAstrocentricPosition(now);
             Vector3d posStar;
             Vector3d posEye = astrocentricPosition(observer.getPosition(), *brightestStar, now);
-#endif
 
             if (body->getSystem() &&
                 body->getSystem()->getStar() &&
                 body->getSystem()->getStar() != brightestStar)
             {
                 UniversalCoord center = body->getSystem()->getStar()->getPosition(now);
-#ifdef __CELVEC__
-                Vec3d v = brightestStar->getPosition(now) - center;
-                posStar = Point3d(v.x, v.y, v.z);
-#else
                 posStar = brightestStar->getPosition(now) - center;
-#endif
             }
             else
             {
@@ -4155,8 +4116,7 @@ static void setupBumpTexenvAmbient(Color ambientColor)
 
 static void renderSphereDefault(const RenderInfo& ri,
                                 const Frustum& frustum,
-                                bool lit,
-                                const GLContext& context)
+                                bool lit)
 {
     if (lit)
         glEnable(GL_LIGHTING);
@@ -4175,8 +4135,7 @@ static void renderSphereDefault(const RenderInfo& ri,
 
     glColor(ri.color);
 
-    g_lodSphere->render(context,
-                        LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
+    g_lodSphere->render(LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
                         frustum, ri.pixWidth,
                         ri.baseTex);
     if (ri.nightTex != nullptr && ri.useTexEnvCombine)
@@ -4204,8 +4163,7 @@ static void renderSphereDefault(const RenderInfo& ri,
         glBlendFunc(GL_ONE, GL_ONE);
 #endif
         glAmbientLightColor(Color::Black); // Disable ambient light
-        g_lodSphere->render(context,
-                            LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
+        g_lodSphere->render(LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
                             frustum, ri.pixWidth,
                             ri.nightTex);
         glAmbientLightColor(ri.ambientColor);
@@ -4220,8 +4178,7 @@ static void renderSphereDefault(const RenderInfo& ri,
         ri.overlayTex->bind();
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        g_lodSphere->render(context,
-                            LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
+        g_lodSphere->render(LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
                             frustum, ri.pixWidth,
                             ri.overlayTex);
         glBlendFunc(GL_ONE, GL_ONE);
@@ -4676,32 +4633,10 @@ void Renderer::renderObject(const Vector3f& pos,
     }
 
     // Compute the inverse model/view matrix
-    // TODO: This code uses the old vector classes, but will be eliminated when the new planet rendering code
-    // is adopted. The new planet renderer doesn't require the inverse transformed view frustum.
-#ifndef __CELVEC__
-/*
-    Transform3f invModelView = cameraOrientation.conjugate() *
-                               Translation3f(-pos) *
-                               obj.orientation *
-                               Scaling3f(1.0f / radius);
-*/
     Affine3f invModelView = obj.orientation *
                             Translation3f(-pos / obj.radius) *
                             cameraOrientation.conjugate();
     Matrix4f invMV = invModelView.matrix();
-#else
-    Matrix4f planetMat = Matrix4f::Identity();
-    planetMat.topLeftCorner(3, 3) = planetRotation;
-
-    Mat4f planetMat_old(Vec4f(planetMat.col(0).x(), planetMat.col(0).y(), planetMat.col(0).z(), planetMat.col(0).w()),
-                        Vec4f(planetMat.col(1).x(), planetMat.col(1).y(), planetMat.col(1).z(), planetMat.col(1).w()),
-                        Vec4f(planetMat.col(2).x(), planetMat.col(2).y(), planetMat.col(2).z(), planetMat.col(2).w()),
-                        Vec4f(planetMat.col(3).x(), planetMat.col(3).y(), planetMat.col(3).z(), planetMat.col(3).w()));
-
-    Mat4f invMV = (fromEigen(cameraOrientation).toMatrix4() *
-                   Mat4f::translation(Point3f(-pos.x() / radius, -pos.y() / radius, -pos.z() / radius)) *
-                   planetMat_old);
-#endif
 
     // The sphere rendering code uses the view frustum to determine which
     // patches are visible. In order to avoid rendering patches that can't
@@ -4780,11 +4715,11 @@ void Renderer::renderObject(const Vector3f& pos,
                                  scaleFactors,
                                  textureResolution,
                                  renderFlags,
-                                 obj.orientation, viewFrustum, *context);
+                                 obj.orientation, viewFrustum, this);
         }
         else
         {
-            renderSphereDefault(ri, viewFrustum, false, *context);
+            renderSphereDefault(ri, viewFrustum, false);
         }
     }
     else
@@ -4803,7 +4738,8 @@ void Renderer::renderObject(const Vector3f& pos,
                                     geometryScale,
                                     renderFlags,
                                     obj.orientation,
-                                    astro::daysToSecs(now - astro::J2000));
+                                    astro::daysToSecs(now - astro::J2000),
+                                    this);
             }
             else
             {
@@ -4813,7 +4749,8 @@ void Renderer::renderObject(const Vector3f& pos,
                                           geometryScale,
                                           renderFlags,
                                           obj.orientation,
-                                          astro::daysToSecs(now - astro::J2000));
+                                          astro::daysToSecs(now - astro::J2000),
+                                          this);
             }
 
             for (unsigned int i = 1; i < 8;/*context->getMaxTextures();*/ i++)
@@ -4835,7 +4772,8 @@ void Renderer::renderObject(const Vector3f& pos,
                          radius, 1.0f - obj.semiAxes.y(),
                          textureResolution,
                          (renderFlags & ShowRingShadows) != 0 && lit,
-                         detailOptions.ringSystemSections);
+                         detailOptions.ringSystemSections,
+                         this);
     }
 
     if (obj.atmosphere != nullptr)
@@ -4872,7 +4810,7 @@ void Renderer::renderObject(const Vector3f& pos,
                                       radius * atmScale,
                                       obj.orientation,
                                       viewFrustum,
-                                      *context);
+                                      this);
             }
             else
             {
@@ -4956,13 +4894,12 @@ void Renderer::renderObject(const Vector3f& pos,
                                   renderFlags,
                                   obj.orientation,
                                   viewFrustum,
-                                  *context);
+                                  this);
             }
             else
             {
                 glDisable(GL_LIGHTING);
-                g_lodSphere->render(*context,
-                                    LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
+                g_lodSphere->render(LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
                                     viewFrustum,
                                     ri.pixWidth,
                                     cloudTex);
@@ -5003,7 +4940,8 @@ void Renderer::renderObject(const Vector3f& pos,
                              radius, 1.0f - obj.semiAxes.y(),
                              textureResolution,
                              (renderFlags & ShowRingShadows) != 0 && lit,
-                             detailOptions.ringSystemSections);
+                             detailOptions.ringSystemSections,
+                             this);
         }
     }
 
@@ -5568,7 +5506,8 @@ struct CometTailVertex
 
 static CometTailVertex cometTailVertices[CometTailSlices * MaxCometTailPoints];
 
-static void ProcessCometTailVertex(const CometTailVertex& v,
+static void ProcessCometTailVertex(const Color& cometTailColor,
+                                   const CometTailVertex& v,
                                    const Vector3f& viewDir,
                                    float fadeDistFromSun)
 {
@@ -5577,7 +5516,8 @@ static void ProcessCometTailVertex(const CometTailVertex& v,
 
     float fadeFactor = 0.5f - 0.5f * (float) tanh(fadeDistFromSun - 1.0f / fadeDistFromSun);
     float shade = abs(viewDir.dot(v.normal) * v.brightness * fadeFactor);
-    glColor4f(0.5f, 0.5f, 0.75f, shade);
+    glColor4f(cometTailColor.red(), cometTailColor.green(),
+              cometTailColor.blue(), shade);
     glVertex(v.point);
 }
 
@@ -5743,12 +5683,17 @@ void Renderer::renderCometTail(const Body& body,
         int n = i * nTailSlices;
         for (int j = 0; j < nTailSlices; j++)
         {
-            ProcessCometTailVertex(cometTailVertices[n + j], viewDir, fadeDistance);
-            ProcessCometTailVertex(cometTailVertices[n + j + nTailSlices],
+            ProcessCometTailVertex(body.getCometTailColor(),
+                                   cometTailVertices[n + j], viewDir,
+                                   fadeDistance);
+            ProcessCometTailVertex(body.getCometTailColor(),
+                                   cometTailVertices[n + j + nTailSlices],
                                    viewDir, fadeDistance);
         }
-        ProcessCometTailVertex(cometTailVertices[n], viewDir, fadeDistance);
-        ProcessCometTailVertex(cometTailVertices[n + nTailSlices],
+        ProcessCometTailVertex(body.getCometTailColor(),
+                               cometTailVertices[n], viewDir, fadeDistance);
+        ProcessCometTailVertex(body.getCometTailColor(),
+                               cometTailVertices[n + nTailSlices],
                                viewDir, fadeDistance);
         glEnd();
     }
@@ -5812,7 +5757,7 @@ void Renderer::renderAsterisms(const Universe& universe, float dist)
 
     glDisable(GL_TEXTURE_2D);
     enableSmoothLines(renderFlags);
-    universe.getAsterisms()->render(Color(ConstellationColor, opacity));
+    universe.getAsterisms()->render(Color(ConstellationColor, opacity), *this);
     disableSmoothLines(renderFlags);
 }
 
@@ -5833,7 +5778,7 @@ void Renderer::renderBoundaries(const Universe& universe, float dist)
 
     glDisable(GL_TEXTURE_2D);
     enableSmoothLines(renderFlags);
-    universe.getBoundaries()->render(Color(BoundaryColor, opacity));
+    universe.getBoundaries()->render(Color(BoundaryColor, opacity), *this);
     disableSmoothLines(renderFlags);
 }
 
@@ -6371,26 +6316,14 @@ void Renderer::buildLabelLists(const Frustum& viewFrustum,
                             // Not rejected. Compute the plane tangent to
                             // the primary at the viewer-to-primary
                             // intersection point.
-#ifdef __CELVEC__
-                            Vec3d primaryVec(primarySphere.center.x(),
-                                             primarySphere.center.y(),
-                                             primarySphere.center.z());
-                            double distToPrimary = primaryVec.length();
-                            Planed primaryTangentPlane(primaryVec, primaryVec * (primaryVec * (1.0 - primarySphere.radius / distToPrimary)));
-#else
                             Vector3d primaryVec = primarySphere.center;
                             double distToPrimary = primaryVec.norm();
                             Hyperplane<double, 3> primaryTangentPlane(primaryVec,
                                                                       primaryVec.dot(primaryVec * (1.0 - primarySphere.radius / distToPrimary)));
-#endif
 
                             // Compute the intersection of the viewer-to-labeled
                             // object ray with the tangent plane.
-#ifdef __CELVEC__
-                            float u = (float) (primaryTangentPlane.d / (primaryTangentPlane.normal * Vec3d(pos.x(), pos.y(), pos.z())));
-#else
                             float u = (float) (primaryTangentPlane.offset() / primaryTangentPlane.normal().dot(pos.cast<double>()));
-#endif
 
                             // If the intersection point is closer to the viewer
                             // than the label, then project the label onto the
@@ -6523,6 +6456,7 @@ class PointStarRenderer : public ObjectRenderer<Star, float>
     float cosFOV{ 1.0f };
 
     const ColorTemperatureTable* colorTemp{ nullptr };
+    float SolarSystemMaxDistance;
 #ifdef DEBUG_HDR_ADAPT
     float minMag;
     float maxMag;
@@ -6632,7 +6566,7 @@ void PointStarRenderer::process(const Star& star, float distance, float appMag)
         // Stars closer than the maximum solar system size are actually
         // added to the render list and depth sorted, since they may occlude
         // planets.
-        if (distance > MaxSolarSystemSize)
+        if (distance > SolarSystemMaxDistance)
         {
 #ifdef USE_HDR
             float satPoint = saturationMag;
@@ -6759,6 +6693,7 @@ void Renderer::renderPointStars(const StarDatabase& starDB,
 #endif
     starRenderer.distanceLimit     = distanceLimit;
     starRenderer.labelMode         = labelMode;
+    starRenderer.SolarSystemMaxDistance = SolarSystemMaxDistance;
 #ifdef DEBUG_HDR_ADAPT
     starRenderer.minMag = -100.f;
     starRenderer.maxMag =  100.f;
@@ -6931,11 +6866,11 @@ void DSORenderer::process(DeepSkyObject* const & dso,
                 glPushMatrix();
                 glTranslate(relPos);
 
-                dso->render(*context,
-                            relPos,
+                dso->render(relPos,
                             observer->getOrientationf(),
                             (float) brightness,
-                            pixelSize);
+                            pixelSize,
+                            renderer);
                 glPopMatrix();
 
                 if (dsoRadius < 1000.0)
@@ -7892,4 +7827,10 @@ void Renderer::updateBodyVisibilityMask()
         flags |= Body::Spacecraft;
 
     bodyVisibilityMask = flags;
+}
+
+void  Renderer::setSolarSystemMaxDistance(float t)
+{
+    if (t >= 1.0f && t <= 10.0f)
+        SolarSystemMaxDistance = t;
 }

@@ -10,10 +10,7 @@
  *  $Id: actions.cpp,v 1.17 2008-01-25 01:05:14 suwalski Exp $
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif /* HAVE_CONFIG_H */
-
 #include <GL/glew.h>
 #include <cstring>
 #include <fstream>
@@ -731,7 +728,7 @@ void actionHelpAbout(GtkAction*, AppData* app)
                          "license", readFromFile("COPYING"),
                          "logo", logo,
                          NULL);
-    gdk_pixbuf_unref(logo);
+    g_object_unref(logo);
 }
 
 
@@ -1343,9 +1340,9 @@ void resyncRenderActions(AppData* app)
 
     /* Unlike the other interfaces, which go through each menu item and set
      * the corresponding renderFlag, we go the other way and set the menu
-     * based on the renderFlag. Last one is ShowEcliptic. */
+     * based on the renderFlag. Last one is ShowFadingOrbits. */
 
-    for (int i = Renderer::ShowStars; i <= Renderer::ShowEcliptic; i *= 2)
+    for (uint64_t i = Renderer::ShowStars; i <= Renderer::ShowFadingOrbits; i *= 2)
     {
         switch (i)
         {

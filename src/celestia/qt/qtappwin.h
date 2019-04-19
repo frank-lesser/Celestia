@@ -69,6 +69,7 @@ class CelestiaAppWindow : public QMainWindow
 
     void centerSelection();
     void gotoSelection();
+    void gotoObject();
     void selectSun();
 
     void slotPreferences();
@@ -99,6 +100,9 @@ class CelestiaAppWindow : public QMainWindow
     void slotBookmarkTriggered(const QString& url);
 
     void handleCelUrl(const QUrl& url);
+
+    void copyText();
+    void pasteText();
 
  signals:
     void progressUpdate(const QString& s, int align, const QColor& c);

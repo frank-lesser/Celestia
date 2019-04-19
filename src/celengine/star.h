@@ -13,6 +13,7 @@
 
 #include <celutil/reshandle.h>
 #include <celutil/color.h>
+#include <celengine/catentry.h>
 #include <celengine/univcoord.h>
 #include <celengine/celestia.h>
 #include <celengine/stellarclass.h>
@@ -21,6 +22,7 @@
 #include <Eigen/Core>
 #include <vector>
 
+class Selection;
 class Orbit;
 class Star;
 
@@ -233,11 +235,13 @@ StarDetails::hasCorona() const
 
 
 
-class Star
+class Star : public CatEntry
 {
 public:
     Star() = default;
-    ~Star();
+    virtual ~Star();
+
+    virtual Selection toSelection();
 
     inline uint32_t getCatalogNumber() const
     {
@@ -301,7 +305,7 @@ public:
     const std::string& getInfoURL() const;
     inline bool hasCorona() const;
 
-    enum {
+    enum : uint32_t {
         MaxTychoCatalogNumber = 0xf0000000,
         InvalidCatalogNumber = 0xffffffff,
     };

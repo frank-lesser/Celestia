@@ -30,13 +30,13 @@ using namespace Eigen;
 using namespace std;
 
 
-static string HDCatalogPrefix("HD ");
-static string HIPPARCOSCatalogPrefix("HIP ");
-static string GlieseCatalogPrefix("Gliese ");
-static string RossCatalogPrefix("Ross ");
-static string LacailleCatalogPrefix("Lacaille ");
-static string TychoCatalogPrefix("TYC ");
-static string SAOCatalogPrefix("SAO ");
+constexpr const char HDCatalogPrefix[]        = "HD ";
+constexpr const char HIPPARCOSCatalogPrefix[] = "HIP ";
+constexpr const char GlieseCatalogPrefix[]    = "Gliese ";
+constexpr const char RossCatalogPrefix[]      = "Ross ";
+constexpr const char LacailleCatalogPrefix[]  = "Lacaille ";
+constexpr const char TychoCatalogPrefix[]     = "TYC ";
+constexpr const char SAOCatalogPrefix[]       = "SAO ";
 
 // The size of the root star octree node is also the maximum distance
 // distance from the Sun at which any star may be located. The current
@@ -44,13 +44,13 @@ static string SAOCatalogPrefix("SAO ");
 // local group of galaxies. A larger value should be OK, but the
 // performance implications for octree traversal still need to be
 // investigated.
-static const float STAR_OCTREE_ROOT_SIZE  = 10000000.0f;
+constexpr const float STAR_OCTREE_ROOT_SIZE   = 10000000.0f;
 
-static const float STAR_OCTREE_MAGNITUDE  = 6.0f;
-//static const float STAR_EXTRA_ROOM        = 0.01f; // Reserve 1% capacity for extra stars
+constexpr const float STAR_OCTREE_MAGNITUDE   = 6.0f;
+//constexpr const float STAR_EXTRA_ROOM        = 0.01f; // Reserve 1% capacity for extra stars
 
-const char* StarDatabase::FILE_HEADER            = "CELSTARS";
-const char* StarDatabase::CROSSINDEX_FILE_HEADER = "CELINDEX";
+constexpr const char FILE_HEADER[]            = "CELSTARS";
+constexpr const char CROSSINDEX_FILE_HEADER[] = "CELINDEX";
 
 
 // Used to sort stars by catalog number
@@ -137,11 +137,11 @@ static bool parseHDCatalogNumber(const string& name,
 static bool parseTychoCatalogNumber(const string& name,
                                     uint32_t* catalogNumber)
 {
-    if (compareIgnoringCase(name, TychoCatalogPrefix, TychoCatalogPrefix.length()) == 0)
+    int len = strlen(TychoCatalogPrefix);
+    if (compareIgnoringCase(name, TychoCatalogPrefix, len) == 0)
     {
         unsigned int tyc1 = 0, tyc2 = 0, tyc3 = 0;
-        if (sscanf(string(name, TychoCatalogPrefix.length(),
-                   string::npos).c_str(),
+        if (sscanf(string(name, len, string::npos).c_str(),
                    " %u-%u-%u", &tyc1, &tyc2, &tyc3) == 3)
         {
             *catalogNumber = (uint32_t) (tyc3 * 1000000000 + tyc2 * 10000 + tyc1);
@@ -433,7 +433,7 @@ string StarDatabase::getStarNameList(const Star& star, const unsigned int maxNam
         if (count != 0)
             starNames += " / ";
 
-        starNames += ReplaceGreekLetterAbbr(iter->second.c_str());
+        starNames += iter->second;
         ++iter;
         ++count;
     }
@@ -753,7 +753,7 @@ static void stcError(const Tokenizer& tok,
 /*! Load star data from a property list into a star instance.
  */
 bool StarDatabase::createStar(Star* star,
-                              StcDisposition disposition,
+                              DataDisposition disposition,
                               uint32_t catalogNumber,
                               Hash* starData,
                               const string& path,
@@ -783,7 +783,7 @@ bool StarDatabase::createStar(Star* star,
         else
         {
             // Spectral type is required for new stars
-            if (disposition != ModifyStar)
+            if (disposition != DataDisposition::Modify)
             {
                 cerr << _("Invalid star: missing spectral type.\n");
                 return false;
@@ -792,7 +792,7 @@ bool StarDatabase::createStar(Star* star,
     }
 
     bool modifyExistingDetails = false;
-    if (disposition == ModifyStar)
+    if (disposition == DataDisposition::Modify)
     {
         StarDetails* existingDetails = star->getDetails();
 
@@ -987,7 +987,7 @@ bool StarDatabase::createStar(Star* star,
 
     if (!modifyExistingDetails)
         star->setDetails(details);
-    if (disposition != ModifyStar)
+    if (disposition != DataDisposition::Modify)
         star->setCatalogNumber(catalogNumber);
 
     // Compute the position in rectangular coordinates.  If a star has an
@@ -1002,7 +1002,7 @@ bool StarDatabase::createStar(Star* star,
         double dec = 0.0;
         double distance = 0.0;
 
-        if (disposition == ModifyStar)
+        if (disposition == DataDisposition::Modify)
         {
             Vector3f pos = star->getPosition();
 
@@ -1026,7 +1026,7 @@ bool StarDatabase::createStar(Star* star,
         }
         else
         {
-            if (disposition != ModifyStar)
+            if (disposition != DataDisposition::Modify)
             {
                 cerr << _("Invalid star: missing right ascension\n");
                 return false;
@@ -1039,7 +1039,7 @@ bool StarDatabase::createStar(Star* star,
         }
         else
         {
-            if (disposition != ModifyStar)
+            if (disposition != DataDisposition::Modify)
             {
                 cerr << _("Invalid star: missing declination.\n");
                 return false;
@@ -1052,7 +1052,7 @@ bool StarDatabase::createStar(Star* star,
         }
         else
         {
-            if (disposition != ModifyStar)
+            if (disposition != DataDisposition::Modify)
             {
                 cerr << _("Invalid star: missing distance.\n");
                 return false;
@@ -1084,7 +1084,7 @@ bool StarDatabase::createStar(Star* star,
         {
             if (!starData->getNumber("AppMag", magnitude))
             {
-                if (disposition != ModifyStar)
+                if (disposition != DataDisposition::Modify)
                 {
                     clog << _("Invalid star: missing magnitude.\n");
                     return false;
@@ -1156,28 +1156,30 @@ bool StarDatabase::load(istream& in, const string& resourcePath)
     Tokenizer tokenizer(&in);
     Parser parser(&tokenizer);
 
+    bindtextdomain(resourcePath.c_str(), resourcePath.c_str()); // domain name is the same as resource path
+
     while (tokenizer.nextToken() != Tokenizer::TokenEnd)
     {
         bool isStar = true;
 
         // Parse the disposition--either Add, Replace, or Modify. The disposition
         // may be omitted. The default value is Add.
-        StcDisposition disposition = AddStar;
+        DataDisposition disposition = DataDisposition::Add;
         if (tokenizer.getTokenType() == Tokenizer::TokenName)
         {
             if (tokenizer.getNameValue() == "Modify")
             {
-                disposition = ModifyStar;
+                disposition = DataDisposition::Modify;
                 tokenizer.nextToken();
             }
             else if (tokenizer.getNameValue() == "Replace")
             {
-                disposition = ReplaceStar;
+                disposition = DataDisposition::Replace;
                 tokenizer.nextToken();
             }
             else if (tokenizer.getNameValue() == "Add")
             {
-                disposition = AddStar;
+                disposition = DataDisposition::Add;
                 tokenizer.nextToken();
             }
         }
@@ -1228,7 +1230,7 @@ bool StarDatabase::load(istream& in, const string& resourcePath)
 
         switch (disposition)
         {
-        case AddStar:
+        case DataDisposition::Add:
             // Automatically generate a catalog number for the star if one isn't
             // supplied.
             if (catalogNumber == Star::InvalidCatalogNumber)
@@ -1241,7 +1243,7 @@ bool StarDatabase::load(istream& in, const string& resourcePath)
             }
             break;
 
-        case ReplaceStar:
+        case DataDisposition::Replace:
             if (catalogNumber == Star::InvalidCatalogNumber)
             {
                 if (!firstName.empty())
@@ -1260,7 +1262,7 @@ bool StarDatabase::load(istream& in, const string& resourcePath)
             }
             break;
 
-        case ModifyStar:
+        case DataDisposition::Modify:
             // If no catalog number was specified, try looking up the star by name
             if (catalogNumber == Star::InvalidCatalogNumber && !firstName.empty())
             {
@@ -1298,13 +1300,14 @@ bool StarDatabase::load(istream& in, const string& resourcePath)
             star = new Star();
 
         bool ok = false;
-        if (isNewStar && disposition == ModifyStar)
+        if (isNewStar && disposition == DataDisposition::Modify)
         {
             clog << "Modify requested for nonexistent star.\n";
         }
         else
         {
             ok = createStar(star, disposition, catalogNumber, starData, resourcePath, !isStar);
+            star->loadCategories(starData, disposition, resourcePath);
         }
         delete starDataValue;
 

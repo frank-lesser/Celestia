@@ -36,7 +36,6 @@
 
 using namespace std;
 
-extern "C" { FILE __iob_func[3] = { *stdin,*stdout,*stderr }; }
 //static const char *description = "Celestia";
 
 // Command line options
@@ -66,6 +65,7 @@ int main(int argc, char *argv[])
 
     Q_INIT_RESOURCE(icons);
 
+    QCoreApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
     QCoreApplication::setOrganizationName("Celestia Development Team");
     QCoreApplication::setApplicationName("Celestia QT");
 

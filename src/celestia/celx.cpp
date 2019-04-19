@@ -19,9 +19,6 @@
 #include <celengine/cmdparser.h>
 #include <celengine/execenv.h>
 #include <celengine/execution.h>
-#ifdef __CELVEC__
-#include <celmath/vecmath.h>
-#endif
 #include <celengine/timeline.h>
 #include <celengine/timelinephase.h>
 #include <fmt/printf.h>
@@ -40,10 +37,7 @@
 #include "celx_observer.h"
 #include "celx_celestia.h"
 #include "celx_gl.h"
-
-#ifdef __CELVEC__
-#include <celengine/eigenport.h>
-#endif
+#include "celx_category.h"
 
 
 // Older gcc versions used <strstream> instead of <sstream>.
@@ -77,6 +71,7 @@ const char* CelxLua::ClassNames[] =
     "class_image",
     "class_texture",
     "class_phase",
+    "class_category"
 };
 
 CelxLua::FlagMap64 CelxLua::RenderFlagMap;
@@ -108,10 +103,24 @@ const char* MouseDownHandler  = "mousedown";
 const char* MouseUpHandler    = "mouseup";
 
 
+#if LUA_VER < 0x050300
+int lua_isinteger(lua_State *L, int index)
+{
+    if (lua_type(L, index) == LUA_TNUMBER)
+    {
+        if (lua_tonumber(L, index) == lua_tointeger(L, index))
+            return 1;
+    }
+    return 0;
+}
+#endif
+
+
 // Initialize various maps from named keywords to numeric flags used within celestia:
 void CelxLua::initRenderFlagMap()
 {
     RenderFlagMap["orbits"]              = Renderer::ShowOrbits;
+    RenderFlagMap["fadingorbits"]        = Renderer::ShowFadingOrbits;
     RenderFlagMap["cloudmaps"]           = Renderer::ShowCloudMaps;
     RenderFlagMap["constellations"]      = Renderer::ShowDiagrams;
     RenderFlagMap["galaxies"]            = Renderer::ShowGalaxies;
@@ -1493,6 +1502,7 @@ static void loadLuaLibs(lua_State* state)
     CreateFontMetaTable(state);
     CreateImageMetaTable(state);
     CreateTextureMetaTable(state);
+    CreateCategoryMetaTable(state);
     ExtendCelestiaMetaTable(state);
     ExtendObjectMetaTable(state);
 
@@ -1754,6 +1764,23 @@ bool LuaState::callLuaHook(void* obj, const char* method, double dt)
 
 /**** Implementation of Celx LuaState wrapper ****/
 
+bool CelxLua::isValid(int i) const
+{
+    int argc = lua_gettop(m_lua);
+    return i > 0 && i <= argc;
+}
+
+bool CelxLua::safeIsValid(int i, FatalErrors errors, const char *msg)
+{
+    if (!isValid(i))
+    {
+        if (errors & WrongArgc)
+            doError(msg);
+        return false;
+    }
+    return true;
+}
+
 CelxLua::CelxLua(lua_State* l) :
 m_lua(l)
 {
@@ -1764,6 +1791,60 @@ bool CelxLua::isType(int index, int type) const
     return Celx_istype(m_lua, index, type);
 }
 
+Value *CelxLua::getValue(int index)
+{
+    Value *v = nullptr;
+    if (isInteger(index))
+        v = new Value((double)getInt(index));
+    else if (isNumber(index))
+        v = new Value(getNumber(index));
+    else if (isBoolean(index))
+        v = new Value(getBoolean(index));
+    else if (isString(index))
+        v = new Value(getString(index));
+    else if (isTable(index))
+    {
+        ::Array *array = new ::Array;
+        Hash *hash = new Hash;
+        push();
+        while(lua_next(m_lua, index) != 0)
+        {
+            if (isInteger(-2))
+            {
+                if (hash != nullptr)
+                {
+                    delete hash;
+                    hash = nullptr;
+                }
+                if (array != nullptr)
+                {
+                    array->push_back(getValue(-1));
+                }
+            }
+            else if (isString(-2))
+            {
+                if (array != nullptr)
+                {
+                    delete array;
+                    array = nullptr;
+                }
+                if (hash != nullptr)
+                {
+                    hash->addValue(getString(-2), *getValue(-1));
+                }
+            }
+            pop(1);
+            if (array == nullptr && hash == nullptr)
+                break;
+        }
+        pop(1);
+        if (hash != nullptr)
+            v = new Value(hash);
+        else if (array != nullptr)
+            v = new Value(array);
+    }
+    return v;
+}
 
 void CelxLua::setClass(int id)
 {
@@ -1848,6 +1929,18 @@ const char* CelxLua::safeGetString(int index,
     return Celx_SafeGetString(m_lua, index, fatalErrors, errorMessage);
 }
 
+const char *CelxLua::safeGetNonEmptyString(int index,
+                                        FatalErrors fatalErrors,
+                                        const char *errorMessage)
+{
+    const char *s = safeGetString(index, fatalErrors, errorMessage);
+    if (s == nullptr || *s == '\0')
+    {
+        doError(errorMessage);
+        return nullptr;
+    }
+    return s;
+}
 
 bool CelxLua::safeGetBoolean(int index,
                              FatalErrors fatalErrors,
@@ -1858,23 +1951,11 @@ bool CelxLua::safeGetBoolean(int index,
 }
 
 
-#ifdef __CELVEC__
-void CelxLua::newVector(const Vec3d& v)
-{
-    vector_new(m_lua, v);
-}
-
-
-void CelxLua::newVector(const Vector3d& v)
-{
-    vector_new(m_lua, fromEigen(v));
-}
-#else
 void CelxLua::newVector(const Vector3d& v)
 {
     vector_new(m_lua, v);
 }
-#endif
+
 
 void CelxLua::newPosition(const UniversalCoord& uc)
 {
@@ -1882,11 +1963,7 @@ void CelxLua::newPosition(const UniversalCoord& uc)
 }
 
 
-#ifdef __CELVEC__
-void CelxLua::newRotation(const Quatd& q)
-#else
 void CelxLua::newRotation(const Quaterniond& q)
-#endif
 {
     rotation_new(m_lua, q);
 }
@@ -1906,20 +1983,12 @@ void CelxLua::newPhase(const TimelinePhase& phase)
     phase_new(m_lua, phase);
 }
 
-#ifdef __CELVEC__
-Vec3d* CelxLua::toVector(int n)
-#else
 Vector3d* CelxLua::toVector(int n)
-#endif
 {
     return to_vector(m_lua, n);
 }
 
-#ifdef __CELVEC__
-Quatd* CelxLua::toRotation(int n)
-#else
 Quaterniond* CelxLua::toRotation(int n)
-#endif
 {
     return to_rotation(m_lua, n);
 }

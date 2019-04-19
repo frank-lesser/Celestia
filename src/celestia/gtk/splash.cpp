@@ -10,10 +10,7 @@
  *  $Id: splash.cpp,v 1.4 2006-07-24 17:31:24 christey Exp $
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif /* HAVE_CONFIG_H */
-
 #include <gtk/gtk.h>
 
 #ifdef CAIRO
@@ -177,7 +174,7 @@ static gboolean splashExpose(GtkWidget* win, GdkEventExpose *event, SplashData* 
                                           NULL, x, y, 0, 0, w, h);
         gdk_draw_pixbuf(win->window, NULL, bg, 0, 0, 0, 0, w, h,
                         GDK_RGB_DITHER_NONE, 0, 0);
-        gdk_pixbuf_unref(bg);
+        g_object_unref(bg);
     }
 
     /* Never redraw again */

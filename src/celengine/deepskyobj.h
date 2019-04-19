@@ -14,10 +14,14 @@
 #include <string>
 #include <iostream>
 #include <celmath/ray.h>
+#include <celengine/catentry.h>
 #include <celengine/glcontext.h>
 #include <celengine/parser.h>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+
+class Selection;
+class Renderer;
 
 constexpr const float DSO_DEFAULT_ABS_MAGNITUDE = -1000.0f;
 
@@ -26,11 +30,12 @@ class Galaxy;
 class Globular;
 class OpenCluster;
 
-class DeepSkyObject
+class DeepSkyObject : public CatEntry
 {
  public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
+    virtual Selection toSelection();
     DeepSkyObject() = default;
     virtual ~DeepSkyObject() = default;
 
@@ -69,7 +74,7 @@ class DeepSkyObject
     float getAbsoluteMagnitude() const;
     void setAbsoluteMagnitude(float);
 
-    std::string getInfoURL() const;
+    const std::string& getInfoURL() const;
     void setInfoURL(const std::string&);
 
     bool isVisible() const { return visible; }
@@ -84,16 +89,16 @@ class DeepSkyObject
                       double& distanceToPicker,
                       double& cosAngleToBoundCenter) const = 0;
     virtual bool load(AssociativeArray*, const std::string& resPath);
-    virtual void render(const GLContext& context,
-                        const Eigen::Vector3f& offset,
+    virtual void render(const Eigen::Vector3f& offset,
                         const Eigen::Quaternionf& viewerOrientation,
                         float brightness,
-                        float pixelSize) = 0;
+                        float pixelSize,
+                        const Renderer*) = 0;
 
     virtual unsigned int getRenderMask() const { return 0; }
     virtual unsigned int getLabelMask() const { return 0; }
 
-    enum
+    enum : uint32_t
     {
         InvalidCatalogNumber = 0xffffffff
     };

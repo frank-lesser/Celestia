@@ -12,8 +12,11 @@
 
 #include "orbit.h"
 #include "samporbit.h"
+#include "xyzvbinary.h"
 #include <celengine/astro.h>
 #include <celmath/mathlib.h>
+#include <celutil/bytes.h>
+#include <celutil/util.h> // intl.h
 #include <cmath>
 #include <string>
 #include <algorithm>
@@ -22,6 +25,7 @@
 #include <fstream>
 #include <limits>
 #include <iomanip>
+#include <fmt/printf.h>
 
 using namespace Eigen;
 using namespace std;
@@ -817,6 +821,77 @@ template <typename T> SampledOrbitXYZV<T>* LoadSampledOrbitXYZV(const string& fi
     return orbit;
 }
 
+/* Load a binary xyzv sampled trajectory file.
+ */
+template <typename T> SampledOrbitXYZV<T>*
+LoadSampledOrbitXYZVBinary(const string& filename, TrajectoryInterpolation interpolation, T /*unused*/)
+{
+    ifstream in(filename);
+    if (!in.good())
+    {
+        fmt::fprintf(cerr, _("Error openning %s.\n"), filename);
+        return nullptr;
+    }
+
+    XYZVBinaryHeader header;
+    if (!in.read(reinterpret_cast<char*>(&header), sizeof(header)))
+    {
+        fmt::fprintf(cerr, _("Error reading header of %s.\n"), filename);
+        return nullptr;
+    }
+
+    if (string(header.magic) != "CELXYZV")
+    {
+        fmt::fprintf(cerr, _("Bad binary xyzv file %s.\n"), filename);
+        return nullptr;
+    }
+
+    if (header.byteOrder != __BYTE_ORDER__)
+    {
+        fmt::fprintf(cerr, _("Unsupported byte order %i, expected %i.\n"),
+                     header.byteOrder, __BYTE_ORDER__);
+        return nullptr;
+    }
+
+
+    if (header.digits != std::numeric_limits<double>::digits)
+    {
+        fmt::fprintf(cerr, _("Unsupported digits number %i, expected %i.\n"),
+                     header.digits, std::numeric_limits<double>::digits);
+        return nullptr;
+    }
+
+    if (header.count == 0)
+        return nullptr;
+
+    SampledOrbitXYZV<T>* orbit = new SampledOrbitXYZV<T>(interpolation);
+
+    double lastSampleTime = -numeric_limits<T>::infinity();
+
+    while (in.good())
+    {
+        XYZVBinaryData data;
+
+        if (!in.read(reinterpret_cast<char*>(&data), sizeof(data)))
+            break;
+
+        double tdb = data.tdb;
+        Vector3d position = Map<Vector3d>(data.position);
+        Vector3d velocity = Map<Vector3d>(data.velocity);
+
+        // Convert velocities from km/sec to km/Julian day
+        velocity *= astro::daysToSecs(1.0);
+
+        if (tdb != lastSampleTime)
+        {
+            orbit->addSample(tdb, position, velocity);
+            lastSampleTime = tdb;
+        }
+    }
+
+    return orbit;
+}
+
 
 /*! Load a trajectory file containing single precision positions.
  */
@@ -838,6 +913,10 @@ Orbit* LoadSampledTrajectoryDoublePrec(const string& filename, TrajectoryInterpo
  */
 Orbit* LoadXYZVTrajectorySinglePrec(const string& filename, TrajectoryInterpolation interpolation)
 {
+    Orbit* ret = LoadSampledOrbitXYZVBinary(filename + "bin", interpolation, 0.0f);
+    if (ret != nullptr)
+        return ret;
+
     return LoadSampledOrbitXYZV(filename, interpolation, 0.0f);
 }
 
@@ -846,5 +925,9 @@ Orbit* LoadXYZVTrajectorySinglePrec(const string& filename, TrajectoryInterpolat
  */
 Orbit* LoadXYZVTrajectoryDoublePrec(const string& filename, TrajectoryInterpolation interpolation)
 {
+    Orbit* ret = LoadSampledOrbitXYZVBinary(filename + "bin", interpolation, 0.0);
+    if (ret != nullptr)
+        return ret;
+
     return LoadSampledOrbitXYZV(filename, interpolation, 0.0);
 }

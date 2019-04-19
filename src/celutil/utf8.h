@@ -11,6 +11,7 @@
 #define _CELUTIL_UTF8_
 
 #include <string>
+#include <vector>
 
 #define UTF8_DEGREE_SIGN         "\302\260"
 #define UTF8_MULTIPLICATION_SIGN "\303\227"
@@ -23,7 +24,7 @@ bool UTF8Decode(const std::string& str, int pos, wchar_t& ch);
 bool UTF8Decode(const char* str, int pos, int length, wchar_t& ch);
 int UTF8Encode(wchar_t ch, char* s);
 int UTF8StringCompare(const std::string& s0, const std::string& s1);
-int UTF8StringCompare(const std::string& s0, const std::string& s1, size_t n);
+int UTF8StringCompare(const std::string& s0, const std::string& s1, size_t n, bool ignoreCase = false);
 
 class UTF8StringOrderingPredicate
 {
@@ -43,14 +44,18 @@ inline int UTF8EncodedSize(wchar_t ch)
         return 1;
     if (ch < 0x800)
         return 2;
+#if WCHAR_MAX > 0xFFFFu
     if (ch < 0x10000)
+#endif
         return 3;
+#if WCHAR_MAX > 0xFFFFu
     if (ch < 0x200000)
         return 4;
     if (ch < 0x4000000)
         return 5;
     else
         return 6;
+#endif
 }
 
 inline int UTF8EncodedSizeFromFirstByte(unsigned int ch)
@@ -109,12 +114,15 @@ class Greek
     };
 
     static const std::string& canonicalAbbreviation(const std::string&);
-
+private:
+    static Greek* m_instance;
  public:
-    static Greek* instance;
+    static Greek* getInstance();
     int nLetters;
     std::string* names;
     std::string* abbrevs;
 };
+
+std::vector<std::string> getGreekCompletion(const std::string &);
 
 #endif // _CELUTIL_UTF8_

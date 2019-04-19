@@ -251,19 +251,19 @@ bool Galaxy::load(AssociativeArray* params, const string& resPath)
 }
 
 
-void Galaxy::render(const GLContext& context,
-                    const Vector3f& offset,
+void Galaxy::render(const Vector3f& offset,
                     const Quaternionf& viewerOrientation,
                     float brightness,
-                    float pixelSize)
+                    float pixelSize,
+                    const Renderer* /* unused */)
 {
     if (form == nullptr)
     {
-        //renderGalaxyEllipsoid(context, offset, viewerOrientation, brightness, pixelSize);
+        //renderGalaxyEllipsoid(offset, viewerOrientation, brightness, pixelSize);
     }
     else
     {
-        renderGalaxyPointSprites(context, offset, viewerOrientation, brightness, pixelSize);
+        renderGalaxyPointSprites(offset, viewerOrientation, brightness, pixelSize);
     }
 }
 
@@ -273,8 +273,7 @@ inline void glVertex4(const Vector4f& v)
     glVertex3fv(v.data());
 }
 
-void Galaxy::renderGalaxyPointSprites(const GLContext& /*unused*/,
-                                      const Vector3f& offset,
+void Galaxy::renderGalaxyPointSprites(const Vector3f& offset,
                                       const Quaternionf& viewerOrientation,
                                       float brightness,
                                       float pixelSize)
@@ -398,8 +397,7 @@ void Galaxy::renderGalaxyPointSprites(const GLContext& /*unused*/,
 
 
 #if 0
-void Galaxy::renderGalaxyEllipsoid(const GLContext& context,
-                                   const Vec3f& offset,
+void Galaxy::renderGalaxyEllipsoid(const Vec3f& offset,
                                    const Quatf&,
                                    float,
                                    float pixelSize)
@@ -660,38 +658,21 @@ void InitializeForms()
     //Irregular Galaxies
     unsigned int galaxySize = GALAXY_POINTS, ip = 0;
     Blob b;
-#ifdef __CELVEC__
-    Point3f p;
-#else
     Vector3f p;
-#endif
 
     BlobVector* irregularPoints = new BlobVector;
     irregularPoints->reserve(galaxySize);
 
     while (ip < galaxySize)
     {
-#ifdef __CELVEC__
-        p        = Point3f(Mathf::sfrand(), Mathf::sfrand(), Mathf::sfrand());
-        float r  = p.distanceFromOrigin();
-#else
         p        = Vector3f(Mathf::sfrand(), Mathf::sfrand(), Mathf::sfrand());
         float r  = p.norm();
-#endif
         if (r < 1)
         {
-#ifdef __CELVEC__
-            float prob = (1 - r) * (fractalsum(Vector3f(p.x + 5, p.y + 5, p.z + 5), 8) + 1) * 0.5f;
-#else
             float prob = (1 - r) * (fractalsum(Vector3f(p.x() + 5, p.y() + 5, p.z() + 5), 8) + 1) * 0.5f;
-#endif
             if (Mathf::frand() < prob)
             {
-#ifdef __CELVEC__
-                b.position   = Vector4f(p.x, p.y, p.z, 1.0f);
-#else
                 b.position   = Vector4f(p.x(), p.y(), p.z(), 1.0f);
-#endif
                 b.brightness = 64u;
                 auto rr      =  (unsigned int) (r * 511);
                 b.colorIndex = rr < 256 ? rr : 255;

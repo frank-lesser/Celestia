@@ -419,7 +419,7 @@ void showSelectionInfo(const Selection& sel)
 
     AngleAxisf aa(orientation);
 
-    fmt::printf(_("%s\nOrientation: [%d, %d, %d], %.1f\n"),
+    fmt::printf(_("%s\nOrientation: [%f, %f, %f], %.1f\n"),
                 sel.getName(), aa.axis().x(), aa.axis().y(), aa.axis().z(), radToDeg(aa.angle()));
 }
 
@@ -1149,19 +1149,7 @@ void CelestiaCore::charEntered(const char *c_p, int modifiers)
         if ( wc && (!iswcntrl(wc)) )
 #endif
         {
-            typedText += string(c_p);
-            typedTextCompletion = sim->getObjectCompletion(typedText, (renderer->getLabelMode() & Renderer::LocationLabels) != 0);
-            typedTextCompletionIdx = -1;
-#ifdef AUTO_COMPLETION
-            if (typedTextCompletion.size() == 1)
-            {
-                string::size_type pos = typedText.rfind('/', typedText.length());
-                if (pos != string::npos)
-                    typedText = typedText.substr(0, pos + 1) + typedTextCompletion[0];
-                else
-                    typedText = typedTextCompletion[0];
-            }
-#endif
+            setTypedText(c_p);
         }
         else if (c == '\b')
         {
@@ -1229,6 +1217,10 @@ void CelestiaCore::charEntered(const char *c_p, int modifiers)
             if (typedText != "")
             {
                 Selection sel = sim->findObjectFromPath(typedText, true);
+                if (sel.empty() && typedTextCompletion.size() > 0)
+                {
+                    sel = sim->findObjectFromPath(typedTextCompletion[0], true);
+                }
                 if (!sel.empty())
                 {
                     addToHistory();
@@ -2762,7 +2754,7 @@ static string DistanceLyToStr(double distance)
     }
     else if (abs(distance) >= 0.5 * astro::parsecsToLightYears(1e+3))
     {
-        units = _("Kpc");
+        units = _("kpc");
         distance = astro::lightYearsToParsecs(distance) / 1e+3;
     }
     else if (abs(distance) >= astro::AUtoLightYears(1000.0f))
@@ -3172,30 +3164,25 @@ static void displayPlanetInfo(Overlay& overlay,
     if (detail > 1)
     {
         if (body.getRotationModel(t)->isPeriodic())
-        {
             displayRotationPeriod(overlay, body.getRotationModel(t)->getPeriod());
-        }
 
-/*
- * Equilibrium temperature calculation disabled; it's too simplistic to be very useful,
- * it's not a fundamental piece of information like distance or size.
- *
-        PlanetarySystem* system = body.getSystem();
-        if (system != nullptr)
+        if (body.getName() != "Earth")
         {
-            const Star* sun = system->getStar();
-            if (sun != nullptr)
-            {
-                double distFromSun = body.getAstrocentricPosition(t).norm();
-                float planetTemp = sun->getTemperature() *
-                    (float) (::pow(1.0 - body.getAlbedo(), 0.25) *
-                             sqrt(sun->getRadius() / (2.0 * distFromSun)));
-                fmt::fprintf(overlay,_("Temperature: %.0f K\n"), planetTemp);
-            }
+            if (body.getMass() > 0)
+                fmt::fprintf(overlay, _("Mass: %.2f Me\n"), body.getMass());
         }
-*/
-    }
 
+        float density = body.getDensity();
+        if (density > 0)
+        {
+            fmt::fprintf(overlay, _("Density: %.2f x 1000 kg/m^3\n"), density / 1000.0);
+        }
+
+
+        float planetTemp = body.getTemperature(t);
+        if (planetTemp > 0)
+            fmt::fprintf(overlay, _("Temperature: %.0f K\n"), planetTemp);
+    }
 }
 
 
@@ -3224,7 +3211,7 @@ static string getSelectionName(const Selection& sel, const Universe& univ)
     case Selection::Type_DeepSky:
         return univ.getDSOCatalog()->getDSOName(sel.deepsky(), false);
     case Selection::Type_Star:
-        return ReplaceGreekLetterAbbr(univ.getStarCatalog()->getStarName(*sel.star(), true));
+        return univ.getStarCatalog()->getStarName(*sel.star(), true);
     case Selection::Type_Location:
         return sel.location()->getName(false);
     default:
@@ -3247,7 +3234,7 @@ static void displaySelectionName(Overlay& overlay,
         break;
     case Selection::Type_Star:
         //displayStarName(overlay, *(sel.star()), *univ.getStarCatalog());
-        overlay << ReplaceGreekLetterAbbr(univ.getStarCatalog()->getStarName(*sel.star(), true));
+        overlay << univ.getStarCatalog()->getStarName(*sel.star(), true);
         break;
     case Selection::Type_Location:
         overlay << sel.location()->getName(true);
@@ -3768,7 +3755,7 @@ void CelestiaCore::renderOverlay()
         glTranslatef(0.0f, fontHeight * 3.0f + 35.0f, 0.0f);
         glColor4f(0.6f, 0.6f, 1.0f, 1.0f);
         overlay->beginText();
-        *overlay << _("Target name: ") << ReplaceGreekLetterAbbr(typedText);
+        fmt::fprintf(*overlay, _("Target name: %s"), typedText);
         overlay->endText();
         overlay->setFont(font);
         if (typedTextCompletion.size() >= 1)
@@ -3793,7 +3780,7 @@ void CelestiaCore::renderOverlay()
                         glColor4f(1.0f, 0.6f, 0.6f, 1);
                     else
                         glColor4f(0.6f, 0.6f, 1.0f, 1);
-                    *overlay << ReplaceGreekLetterAbbr(*iter) << "\n";
+                    *overlay << *iter << "\n";
                 }
                 overlay->endText();
                 glPopMatrix();
@@ -4020,27 +4007,13 @@ using StarLoader = CatalogLoader<StarDatabase>;
 using DeepSkyLoader = CatalogLoader<DSODatabase>;
 
 
-bool CelestiaCore::initSimulation(const string* configFileName,
-                                  const vector<string>* extrasDirs,
+bool CelestiaCore::initSimulation(const string& configFileName,
+                                  const vector<string>& extrasDirs,
                                   ProgressNotifier* progressNotifier)
 {
-    // Say we're not ready to render yet.
-    // bReady = false;
-#ifdef REQUIRE_LICENSE_FILE
-    // Check for the presence of the license file--don't run unless it's there.
+    if (!configFileName.empty())
     {
-        ifstream license("License.txt");
-        if (!license.good())
-        {
-            fatalError(_("License file 'License.txt' is missing!"), false);
-            return false;
-        }
-    }
-#endif
-
-    if (configFileName != nullptr)
-    {
-        config = ReadCelestiaConfig(*configFileName);
+        config = ReadCelestiaConfig(configFileName);
     }
     else
     {
@@ -4072,14 +4045,14 @@ bool CelestiaCore::initSimulation(const string* configFileName,
     // Insert additional extras directories into the configuration. These
     // additional directories typically come from the command line. It may
     // be useful to permit other command line overrides of config file fields.
-    if (extrasDirs != nullptr)
+    if (!extrasDirs.empty())
     {
         // Only insert the additional extras directories that aren't also
         // listed in the configuration file. The additional directories are added
         // after the ones from the config file and the order in which they were
         // specified is preserved. This process in O(N*M), but the number of
         // additional extras directories should be small.
-        for (const auto& dir : *extrasDirs)
+        for (const auto& dir : extrasDirs)
         {
             if (find(config->extrasDirs.begin(), config->extrasDirs.end(), dir) ==
                 config->extrasDirs.end())
@@ -4131,15 +4104,11 @@ bool CelestiaCore::initSimulation(const string* configFileName,
         ifstream dsoFile(file, ios::in);
         if (!dsoFile.good())
         {
-            cerr << _("Error opening deepsky catalog file.\n");
-            delete dsoDB;
-            return false;
+            warning(fmt::sprintf(_("Error opening deepsky catalog file %s.\n"), file));
         }
         if (!dsoDB->load(dsoFile, ""))
         {
-            cerr << _("Cannot read Deep Sky Objects database.\n");
-            delete dsoDB;
-            return false;
+            warning(fmt::sprintf(_("Cannot read Deep Sky Objects database %s.\n"), file));
         }
     }
 
@@ -4180,7 +4149,7 @@ bool CelestiaCore::initSimulation(const string* configFileName,
             ifstream solarSysFile(file, ios::in);
             if (!solarSysFile.good())
             {
-                warning(_("Error opening solar system catalog.\n"));
+                warning(fmt::sprintf(_("Error opening solar system catalog %s.\n"), file));
             }
             else
             {
@@ -4212,7 +4181,8 @@ bool CelestiaCore::initSimulation(const string* configFileName,
         ifstream asterismsFile(config->asterismsFile, ios::in);
         if (!asterismsFile.good())
         {
-            warning(_("Error opening asterisms file."));
+            warning(fmt::sprintf(_("Error opening asterisms file %s.\n"),
+                                 config->asterismsFile));
         }
         else
         {
@@ -4227,7 +4197,8 @@ bool CelestiaCore::initSimulation(const string* configFileName,
         ifstream boundariesFile(config->boundariesFile, ios::in);
         if (!boundariesFile.good())
         {
-            warning(_("Error opening constellation boundaries files."));
+            warning(fmt::sprintf(_("Error opening constellation boundaries file %s.\n"),
+                                 config->boundariesFile));
         }
         else
         {
@@ -4286,7 +4257,7 @@ bool CelestiaCore::initRenderer()
     context->init(config->ignoreGLExtensions);
     // Choose the render path, starting with the least desirable
     context->setRenderPath(GLContext::GLPath_GLSL);
-    fmt::printf(_("render path: %i\n"), context->getRenderPath());
+    //fmt::printf(_("render path: %i\n"), context->getRenderPath());
 
     Renderer::DetailOptions detailOptions;
     detailOptions.ringSystemSections = config->ringSystemSections;
@@ -5052,3 +5023,20 @@ bool CelestiaCore::initLuaHook(ProgressNotifier* progressNotifier)
     return true;
 }
 #endif
+
+void CelestiaCore::setTypedText(const char *c_p)
+{
+    typedText += string(c_p);
+    typedTextCompletion = sim->getObjectCompletion(typedText, (renderer->getLabelMode() & Renderer::LocationLabels) != 0);
+    typedTextCompletionIdx = -1;
+#ifdef AUTO_COMPLETION
+    if (typedTextCompletion.size() == 1)
+    {
+        string::size_type pos = typedText.rfind('/', typedText.length());
+        if (pos != string::npos)
+            typedText = typedText.substr(0, pos + 1) + typedTextCompletion[0];
+        else
+            typedText = typedTextCompletion[0];
+    }
+#endif
+}

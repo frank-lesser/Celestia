@@ -233,8 +233,8 @@ class CelestiaCore // : public Watchable<CelestiaCore>
     CelestiaCore();
     ~CelestiaCore();
 
-    bool initSimulation(const std::string* = nullptr,
-                        const std::vector<std::string>* extrasDirs = nullptr,
+    bool initSimulation(const std::string& configFileName = "",
+                        const std::vector<std::string>& extrasDirs = {},
                         ProgressNotifier* progressNotifier = nullptr);
     bool initRenderer();
     void start(double t);
@@ -377,6 +377,9 @@ class CelestiaCore // : public Watchable<CelestiaCore>
     void fatalError(const std::string&, bool visual = true);
 
     void setScriptImage(float, float, float, float, const std::string&, bool);
+
+    const std::string& getTypedText() const { return typedText; }
+    void setTypedText(const char *);
 
  protected:
     bool readStars(const CelestiaConfig&, ProgressNotifier*);

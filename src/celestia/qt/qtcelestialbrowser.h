@@ -14,6 +14,7 @@
 #define _QTCELESTIALBROWSER_H_
 
 #include <QWidget>
+#include <celengine/body.h>
 #include "qtselectionpopup.h"
 
 class QAbstractItemModel;
@@ -44,6 +45,7 @@ Q_OBJECT
     void slotRefreshTable();
     void slotContextMenu(const QPoint& pos);
     void slotMarkSelected();
+    void slotUnmarkSelected();
     void slotClearMarkers();
     void slotSelectionChanged(const QItemSelection& newSel, const QItemSelection& oldSel);
 

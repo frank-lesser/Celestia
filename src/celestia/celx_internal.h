@@ -17,6 +17,8 @@
 #include <string>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <celutil/color.h>
+#include <celengine/parser.h>
 #include "celx.h"
 
 class CelestiaCore;
@@ -37,6 +39,7 @@ enum
     Celx_Image    = 10,
     Celx_Texture  = 11,
     Celx_Phase    = 12,
+    Celx_Category = 13
 };
 
 
@@ -94,7 +97,151 @@ public:
     CelxLua(lua_State* l);
     ~CelxLua() = default;
 
+    static int localIndex(int n) { return lua_upvalueindex(n); }
+
+    /**** push-on-stack methods ****/
+
+    int push()
+    {
+        lua_pushnil(m_lua);
+        return 1;
+    }
+    int push(bool a)
+    {
+        lua_pushboolean(m_lua, a);
+        return 1;
+    }
+    int push(int a)
+    {
+        lua_pushinteger(m_lua, a);
+        return 1;
+    }
+    int push(float a)
+    {
+        lua_pushnumber(m_lua, a);
+        return 1;
+    }
+    int push(double a)
+    {
+        lua_pushnumber(m_lua, a);
+        return 1;
+    }
+    int push(const char *a)
+    {
+        lua_pushstring(m_lua, a);
+        return 1;
+    }
+    int push(int cc(lua_State*), int n)
+    {
+        lua_pushcclosure(m_lua, cc, n);
+        return 1;
+    }
+
+    template <typename T> T *newUserData()
+    {
+        return reinterpret_cast<T*>(lua_newuserdata(m_lua, sizeof(T)));
+    }
+    template <typename T> T *newUserData(T a)
+    {
+        T *p = newUserData<T>();
+        if (p != nullptr)
+            new (p) T(a);
+        return p;
+    }
+    template <typename T> T *newUserDataArray(int n)
+    {
+        return reinterpret_cast<T*>(lua_newuserdata(m_lua, sizeof(T) * n));
+    }
+    template <typename T> T *newUserDataArray(T *a, int n)
+    {
+        T *p = reinterpret_cast<T*>(lua_newuserdata(m_lua, sizeof(T) * n));
+        std::copy(a, a + n, p);
+        return p;
+    }
+    template <typename T> int pushClass(T a)
+    {
+        newUserData(a);
+        setClass(celxClassId(a));
+        return 1;
+    }
+
+    template<typename T> static int iterator(lua_State *l)
+    {
+        CelxLua celx(l);
+
+        T *c = celx.getUserData<T>(CelxLua::localIndex(1));
+        int i = static_cast<int>(celx.getNumber(CelxLua::localIndex(2)));
+        if (i < 0)
+            return 0;
+        T ret = c[i];
+        i--;
+        celx.push(i);
+        lua_replace(l, CelxLua::localIndex(2));
+        return celx.pushClass(ret);
+    };
+    template<typename V, typename K> static V value(std::pair<const K, V> &v)
+    {
+        return v.second;
+    }
+    template<typename V> static V value(V it)
+    {
+        return it;
+    }
+    template<typename T, typename C> int pushIterable(C& a)
+    {
+        CelxLua celx(m_lua);
+        int n = a.size();
+        T *array = celx.newUserDataArray<T>(n);
+        for (auto &it : a)
+        {
+            *array = value(it);
+            array++;
+        }
+        celx.push(n - 1);
+        celx.push(iterator<T>, 2);
+
+        return 1;
+    }
+    template<typename T, typename C> int pushIterable(C *a)
+    {
+        if (a == nullptr)
+            return 0;
+        return pushIterable<T>(*a);
+    }
+
+    /**** type check methods ****/
+
     bool isType(int index, int type) const;
+    bool isInteger(int n = 0) const { return lua_isinteger(m_lua, n) == 1; }
+    bool isNumber(int n = 0) const { return lua_isnumber(m_lua, n) == 1; }
+    bool isBoolean(int n = 0) const { return lua_isboolean(m_lua, n) == 1; }
+    bool isString(int n = 0) const { return lua_isstring(m_lua, n) == 1; }
+    bool isTable(int n = 0) const { return lua_istable(m_lua, n) == 1; }
+    bool isUserData(int n = 0) const { return lua_isuserdata(m_lua, n) == 1; }
+    bool isValid(int) const;
+
+    /**** get methods ****/
+
+    lua_Integer getInt(int n = 0) const { return lua_tointeger(m_lua, n); }
+    double getNumber(int n = 0) const { return lua_tonumber(m_lua, n); }
+    bool getBoolean(int n = 0) const { return lua_toboolean(m_lua, n) == 1; }
+    const char *getString(int n = 0) const { return lua_tostring(m_lua, n); }
+    Value *getValue(int n = 0);
+    template<typename T> T *getUserData(int n = 0) const
+    {
+        return static_cast<T*>(lua_touserdata(m_lua, n));
+    }
+    template<typename T> T *getClass(int n = 0) const
+    {
+        T dummy;
+        if (isType(n, celxClassId(dummy)))
+            return getUserData<T>(n);
+        return nullptr;
+    }
+
+    void pop(int n) { lua_pop(m_lua, n); }
+
+    /**** various legacy methods ****/
 
     void setClass(int id);
     void pushClassName(int id);
@@ -109,25 +256,14 @@ public:
     void setTable(const char* field, const char* value);
 
     void newFrame(const ObserverFrame& f);
-#ifdef __CELVEC__
-    void newVector(const Vec3d& v);
-#endif
     void newVector(const Eigen::Vector3d& v);
-#ifdef __CELVEC__
-    void newRotation(const Quatd& q);
-#endif
     void newRotation(const Eigen::Quaterniond& q);
     void newPosition(const UniversalCoord& uc);
     void newObject(const Selection& sel);
     void newPhase(const TimelinePhase& phase);
 
-#ifdef __CELVEC__
-    Vec3d* toVector(int n);
-    Quatd* toRotation(int n);
-#else
     Eigen::Vector3d* toVector(int n);
     Eigen::Quaterniond* toRotation(int n);
-#endif
     UniversalCoord* toPosition(int n);
     Selection* toObject(int n);
     ObserverFrame* toFrame(int n);
@@ -137,6 +273,11 @@ public:
 
     CelestiaCore* appCore(FatalErrors fatalErrors = NoErrors);
 
+    /**** safe get methods ****/
+
+    bool safeIsValid(int,
+                     FatalErrors error = AllErrors,
+                     const char *errorMsg = "Invalid stack index.");
     lua_Number safeGetNumber(int index,
                              FatalErrors fatalErrors = AllErrors,
                              const char* errorMessage = "Numeric argument expected",
@@ -144,13 +285,48 @@ public:
     const char* safeGetString(int index,
                               FatalErrors fatalErrors = AllErrors,
                               const char* errorMessage = "String argument expected");
+    const char *safeGetNonEmptyString(int index,
+                            FatalErrors fatalErrors = AllErrors,
+                            const char *errorMessage = "Non empty string argument expected");
     bool safeGetBoolean(int index,
                         FatalErrors fatalErrors = AllErrors,
                         const char* errorMessage = "Boolean argument expected",
                         bool defaultValue = false);
 
-    LuaState* getLuaStateObject();
+    template<typename T> T *safeGetUserData(int index = 0,
+                                            FatalErrors errors = AllErrors,
+                                            const char *errorMessage = "User data expected")
+    {
+        if (!safeIsValid(index))
+            return nullptr;
+        if (isUserData(index))
+            return reinterpret_cast<T*>(lua_touserdata(m_lua, index));
 
+        if (errors & WrongType)
+            doError(errorMessage);
+        return nullptr;
+    }
+
+    template<typename T> T *safeGetClass(int i,
+                                         FatalErrors fatalErrors = AllErrors,
+                                         const char *msg = "Celx class expected")
+    {
+        T *a = safeGetUserData<T>(i, fatalErrors, msg);
+        if (a != nullptr && isType(i, celxClassId(*a)))
+            return a;
+
+        if (fatalErrors & WrongType)
+            doError(msg);
+        return nullptr;
+    }
+
+    template<typename T> T *getThis(FatalErrors fatalErrors = AllErrors,
+                                    const char *msg = "Celx class expected")
+    {
+        return safeGetClass<T>(1, fatalErrors, msg);
+    }
+
+    LuaState* getLuaStateObject();
 
     // String to flag mappings
     typedef std::map<std::string, uint32_t> FlagMap;

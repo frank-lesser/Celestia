@@ -10,6 +10,7 @@
 #include <map>
 #include <celengine/location.h>
 #include <celengine/body.h>
+#include <celengine/selection.h>
 #include <celutil/util.h>
 
 using namespace Eigen;
@@ -149,9 +150,9 @@ void Location::setImportance(float _importance)
 }
 
 
-string Location::getInfoURL() const
+const string& Location::getInfoURL() const
 {
-    return "";
+    return infoURL;
 }
 
 
@@ -224,4 +225,10 @@ Vector3d Location::getHeliocentricPosition(double t) const
         return position.cast<double>();
 
     return parent->getAstrocentricPosition(t) + getPlanetocentricPosition(t);
+}
+
+Selection Location::toSelection()
+{
+//    std::cout << "Location::toSelection()\n";
+    return Selection(this);
 }

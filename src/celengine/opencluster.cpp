@@ -63,11 +63,11 @@ bool OpenCluster::load(AssociativeArray* params, const string& resPath)
 }
 
 
-void OpenCluster::render(const GLContext& /*unused*/,
-                         const Vector3f& /*unused*/,
+void OpenCluster::render(const Vector3f& /*unused*/,
                          const Quaternionf& /*unused*/,
                          float /*unused*/,
-                         float /*unused*/)
+                         float /*unused*/,
+                         const Renderer* /*unused*/)
 {
     // Nothing to do right now; open clusters are only visible as their
     // constituent stars and a label when labels are turned on.  A good idea

@@ -80,11 +80,11 @@ bool Nebula::load(AssociativeArray* params, const string& resPath)
 }
 
 
-void Nebula::render(const GLContext& /*glcontext*/,
-                    const Vector3f& /*unused*/,
+void Nebula::render(const Vector3f& /*unused*/,
                     const Quaternionf& /*unused*/,
                     float /*unused*/,
-                    float pixelSize)
+                    float pixelSize,
+                    const Renderer* renderer)
 {
     Geometry* g = nullptr;
     if (geometry != InvalidResource)
@@ -97,7 +97,7 @@ void Nebula::render(const GLContext& /*glcontext*/,
     glScalef(getRadius(), getRadius(), getRadius());
     glRotate(getOrientation());
 
-    GLSLUnlit_RenderContext rc(getRadius());
+    GLSLUnlit_RenderContext rc(renderer, getRadius());
     rc.setPointScale(2.0f * getRadius() / pixelSize);
     g->render(rc);
     glUseProgram(0);

@@ -213,6 +213,7 @@ class Renderer
                                           Renderer::ShowNebulae        |
                                           Renderer::ShowOpenClusters   |
                                           Renderer::ShowAutoMag        |
+                                          Renderer::ShowFadingOrbits   |
                                           Renderer::ShowSmoothLines;
 
     uint64_t getRenderFlags() const;
@@ -235,6 +236,7 @@ class Renderer
     void setStarColorTable(const ColorTemperatureTable*);
     bool getVideoSync() const;
     void setVideoSync(bool);
+    void setSolarSystemMaxDistance(float);
 
 #ifdef USE_HDR
     bool getBloomEnabled();
@@ -302,6 +304,8 @@ class Renderer
                              LabelAlignment halign = AlignLeft,
                              LabelVerticalAlignment valign = VerticalAlignBottom,
                              float size = 0.0f);
+
+   ShaderManager& getShaderManager() const { return *shaderManager; }
 
     // Callbacks for renderables; these belong in a special renderer interface
     // only visible in object's render methods.
@@ -620,6 +624,7 @@ class Renderer
 
  private:
     GLContext* context;
+    ShaderManager* shaderManager{ nullptr };
 
     int windowWidth;
     int windowHeight;
@@ -728,6 +733,12 @@ class Renderer
     bool objectAnnotationSetOpen;
 
     double realTime{ true };
+
+   // Maximum size of a solar system in light years. Features beyond this distance
+   // will not necessarily be rendered correctly. This limit is used for
+   // visibility culling of solar systems.
+   float SolarSystemMaxDistance{ 1.0f };
+
 
     // Location markers
  public:

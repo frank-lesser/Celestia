@@ -18,6 +18,7 @@
 #include "globular.h"
 #include "nebula.h"
 #include "opencluster.h"
+#include <celengine/selection.h>
 #include <celutil/util.h>
 #include <celutil/debug.h>
 #include <celmath/intersect.h>
@@ -71,7 +72,7 @@ string DeepSkyObject::getDescription() const
     return "";
 }
 
-string DeepSkyObject::getInfoURL() const
+const string& DeepSkyObject::getInfoURL() const
 {
     return infoURL;
 }
@@ -178,12 +179,6 @@ bool DeepSkyObject::load(AssociativeArray* params, const string& resPath)
     params->getAngle("Angle", angle);
 
     setOrientation(Quaternionf(AngleAxisf((float) degToRad(angle), axis.cast<float>().normalized())));
-#ifdef CELVEC
-    Quatf q(1);
-    q.setAxisAngle(Vec3f((float) axis.x, (float) axis.y, (float) axis.z),
-                   (float) degToRad(angle));
-    setOrientation(toEigen(q));
-#endif
 
     double radius = 1.0;
     params->getLength("Radius", radius, KM_PER_LY);
@@ -223,4 +218,10 @@ bool DeepSkyObject::load(AssociativeArray* params, const string& resPath)
     }
 
     return true;
+}
+
+Selection DeepSkyObject::toSelection()
+{
+//    std::cout << "DeepSkyObject::toSelection()\n";
+    return Selection(this);
 }

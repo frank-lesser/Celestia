@@ -12,13 +12,7 @@
 
 #include <algorithm>
 #include <cassert>
-
-#ifndef _WIN32
-#ifndef TARGET_OS_MAC
 #include <config.h>
-#endif
-#endif /* _WIN32 */
-
 #include "render.h"
 #include "astro.h"
 #include "glshader.h"
@@ -57,7 +51,7 @@ void renderEllipsoid_GLSL(const RenderInfo& ri,
                        uint64_t renderFlags,
                        const Quaternionf& planetOrientation,
                        const Frustum& frustum,
-                       const GLContext& context)
+                       const Renderer* renderer)
 {
     float radius = semiAxes.maxCoeff();
 
@@ -224,7 +218,7 @@ void renderEllipsoid_GLSL(const RenderInfo& ri,
 
 
     // Get a shader for the current rendering configuration
-    CelestiaGLProgram* prog = GetShaderManager().getShader(shadprop);
+    CelestiaGLProgram* prog = renderer->getShaderManager().getShader(shadprop);
     if (prog == nullptr)
         return;
 
@@ -279,8 +273,7 @@ void renderEllipsoid_GLSL(const RenderInfo& ri,
     unsigned int attributes = LODSphereMesh::Normals;
     if (ri.bumpTex != nullptr)
         attributes |= LODSphereMesh::Tangents;
-    g_lodSphere->render(context,
-                        attributes,
+    g_lodSphere->render(attributes,
                         frustum, ri.pixWidth,
                         textures[0], textures[1], textures[2], textures[3]);
 
@@ -300,11 +293,12 @@ void renderGeometry_GLSL(Geometry* geometry,
                          float geometryScale,
                          uint64_t renderFlags,
                          const Quaternionf& planetOrientation,
-                         double tsec)
+                         double tsec,
+                         const Renderer* renderer)
 {
     glDisable(GL_LIGHTING);
 
-    GLSL_RenderContext rc(ls, geometryScale, planetOrientation);
+    GLSL_RenderContext rc(renderer, ls, geometryScale, planetOrientation);
 
     if ((renderFlags & Renderer::ShowAtmospheres) != 0)
     {
@@ -352,11 +346,12 @@ void renderGeometry_GLSL_Unlit(Geometry* geometry,
                                float geometryScale,
                                uint64_t /* renderFlags */,
                                const Quaternionf& /* planetOrientation */,
-                               double tsec)
+                               double tsec,
+                               const Renderer* renderer)
 {
     glDisable(GL_LIGHTING);
 
-    GLSLUnlit_RenderContext rc(geometryScale);
+    GLSLUnlit_RenderContext rc(renderer, geometryScale);
 
     rc.setPointScale(ri.pointScale);
 
@@ -397,7 +392,7 @@ void renderClouds_GLSL(const RenderInfo& ri,
                        uint64_t renderFlags,
                        const Quaternionf& planetOrientation,
                        const Frustum& frustum,
-                       const GLContext& context)
+                       const Renderer* renderer)
 {
     float radius = semiAxes.maxCoeff();
 
@@ -474,7 +469,7 @@ void renderClouds_GLSL(const RenderInfo& ri,
     }
 
     // Get a shader for the current rendering configuration
-    CelestiaGLProgram* prog = GetShaderManager().getShader(shadprop);
+    CelestiaGLProgram* prog = renderer->getShaderManager().getShader(shadprop);
     if (prog == nullptr)
         return;
 
@@ -511,8 +506,7 @@ void renderClouds_GLSL(const RenderInfo& ri,
     unsigned int attributes = LODSphereMesh::Normals;
     if (cloudNormalMap != nullptr)
         attributes |= LODSphereMesh::Tangents;
-    g_lodSphere->render(context,
-                        attributes,
+    g_lodSphere->render(attributes,
                         frustum, ri.pixWidth,
                         textures[0], textures[1], textures[2], textures[3]);
 
@@ -530,7 +524,7 @@ renderAtmosphere_GLSL(const RenderInfo& ri,
                       float radius,
                       const Quaternionf& /*planetOrientation*/,
                       const Frustum& frustum,
-                      const GLContext& context)
+                      const Renderer* renderer)
 {
     // Currently, we just skip rendering an atmosphere when there are no
     // light sources, even though the atmosphere would still the light
@@ -547,7 +541,7 @@ renderAtmosphere_GLSL(const RenderInfo& ri,
     shadprop.lightModel = ShaderProperties::AtmosphereModel;
 
     // Get a shader for the current rendering configuration
-    CelestiaGLProgram* prog = GetShaderManager().getShader(shadprop);
+    CelestiaGLProgram* prog = renderer->getShaderManager().getShader(shadprop);
     if (prog == nullptr)
         return;
 
@@ -575,8 +569,7 @@ renderAtmosphere_GLSL(const RenderInfo& ri,
     glDepthMask(GL_FALSE);
     glBlendFunc(GL_ONE, GL_SRC_ALPHA);
 
-    g_lodSphere->render(context,
-                        LODSphereMesh::Normals,
+    g_lodSphere->render(LODSphereMesh::Normals,
                         frustum,
                         ri.pixWidth,
                         nullptr);
@@ -626,7 +619,8 @@ void renderRings_GLSL(RingSystem& rings,
                       float planetOblateness,
                       unsigned int textureResolution,
                       bool renderShadow,
-                      unsigned int nSections)
+                      unsigned int nSections,
+                      const Renderer* renderer)
 {
     float inner = rings.innerRadius / planetRadius;
     float outer = rings.outerRadius / planetRadius;
@@ -651,7 +645,7 @@ void renderRings_GLSL(RingSystem& rings,
 
 
     // Get a shader for the current rendering configuration
-    CelestiaGLProgram* prog = GetShaderManager().getShader(shadprop);
+    CelestiaGLProgram* prog = renderer->getShaderManager().getShader(shadprop);
     if (prog == nullptr)
         return;
 
@@ -751,7 +745,8 @@ void renderGeometryShadow_GLSL(Geometry* geometry,
                               const LightingState& ls,
                               float geometryScale,
                               const Quaternionf& planetOrientation,
-                              double tsec)
+                              double tsec,
+                              const Renderer* renderer)
 {
     glDisable(GL_LIGHTING);
 
@@ -768,7 +763,7 @@ void renderGeometryShadow_GLSL(Geometry* geometry,
     // Render backfaces only in order to reduce self-shadowing artifacts
     glCullFace(GL_FRONT);
 
-    GLSL_RenderContext rc(ls, geometryScale, planetOrientation);
+    GLSL_RenderContext rc(renderer, ls, geometryScale, planetOrientation);
 
     rc.setPointScale(ri.pointScale);
 

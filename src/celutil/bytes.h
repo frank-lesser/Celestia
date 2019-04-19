@@ -10,24 +10,50 @@
 #ifndef _CELUTIL_BYTES_H_
 #define _CELUTIL_BYTES_H_
 
-#ifndef _WIN32
-#ifndef TARGET_OS_MAC
 #include <config.h>
-#endif /* TARGET_OS_MAC */
-#endif /* _WIN32 */
+
+#ifndef __BYTE_ORDER__
+# ifdef _WIN32
+// FIXME: we assume that windows runs on LE hw only
+# define __BYTE_ORDER__ 1234
+# else
+# error "Unknown system or compiler"
+# endif
+#endif
 
 /* Use the system byteswap.h definitions if we have them */
-#ifdef HAVE_BYTESWAP_H
+#if defined(HAVE_BYTESWAP_H)
 #include <byteswap.h>
+#elif defined(__APPLE__)
+#include <libkern/OSByteOrder.h>
+#define bswap_16 OSSwapInt16
+#define bswap_32 OSSwapInt32
+#define bswap_64 OSSwapInt64
+#elif defined(_MSC_VER) && (_MSC_VER >= 1400)
+#include <stdlib.h>
+#define bswap_32 _byteswap_ulong
+#define bswap_16 _byteswap_ushort
+#define bswap_64 _byteswap_uint64
 #else
-static unsigned short bswap_16 (unsigned short val)
+static unsigned short bswap_16 (uint16_t val)
 {
   return ((((val) >> 8) & 0xff) | (((val) & 0xff) << 8));
 }
 
-static unsigned int bswap_32(unsigned int val) {
+static unsigned int bswap_32(uint32_t val) {
   return (((val) & 0xff000000) >> 24) | (((val) & 0x00ff0000) >>  8) |
     (((val) & 0x0000ff00) <<  8) | (((val) & 0x000000ff) << 24);
+}
+
+static unsigned int bswap_64(uint64_t val) {
+  return (((val & 0xff00000000000000ull) >> 56) |
+          ((val & 0x00ff000000000000ull) >> 40) |
+          ((val & 0x0000ff0000000000ull) >> 24) |
+          ((val & 0x000000ff00000000ull) >> 8)  |
+          ((val & 0x00000000ff000000ull) << 8)  |
+          ((val & 0x0000000000ff0000ull) << 24) |
+          ((val & 0x000000000000ff00ull) << 40) |
+          ((val & 0x00000000000000ffull) << 56));
 }
 #endif
 

@@ -7,12 +7,7 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
-#ifndef _WIN32
-#ifndef TARGET_OS_MAC
 #include <config.h>
-#endif /* TARGET_OS_MAC */
-#endif /* _WIN32 */
-
 #include <cstring>
 #include <GL/glew.h>
 #include <celutil/util.h>
@@ -20,6 +15,7 @@
 #include "asterism.h"
 #include "parser.h"
 #include "vecgl.h"
+#include "render.h"
 
 using namespace std;
 
@@ -106,7 +102,7 @@ bool Asterism::isColorOverridden() const
 
 /*! Draw visible asterisms.
  */
-void AsterismList::render(Color defaultColor)
+void AsterismList::render(const Color& defaultColor, const Renderer& renderer)
 {
     if (vboId == 0)
     {
@@ -129,7 +125,7 @@ void AsterismList::render(Color defaultColor)
         glBindBuffer(GL_ARRAY_BUFFER, vboId);
     }
 
-    CelestiaGLProgram* prog = GetShaderManager().getShader(shadprop);
+    CelestiaGLProgram* prog = renderer.getShaderManager().getShader(shadprop);
     if (prog == nullptr)
         return;
 
@@ -274,8 +270,11 @@ AsterismList* ReadAsterismList(istream& in, const StarDatabase& stardb)
                     if (i->getType() == Value::StringType)
                     {
                         Star* star = stardb.find(i->getString());
+                        if (star == nullptr)
+                            star = stardb.find(ReplaceGreekLetterAbbr(i->getString()));
                         if (star != nullptr)
                             new_chain->push_back(star->getPosition());
+                        else DPRINTF(0, "Error loading star \"%s\" for asterism \"%s\".\n", name.c_str(), i->getString().c_str());
                     }
                 }
 

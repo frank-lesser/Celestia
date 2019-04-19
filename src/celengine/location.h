@@ -11,14 +11,18 @@
 #define _CELENGINE_LOCATION_H_
 
 #include <string>
+#include <celengine/catentry.h>
 #include <celutil/color.h>
 #include <Eigen/Core>
 
+class Selection;
 class Body;
 
-class Location
+class Location : public CatEntry
 {
- public:
+public:
+    virtual Selection toSelection();
+
     std::string getName(bool i18n = false) const;
     void setName(const std::string&);
 
@@ -31,7 +35,7 @@ class Location
     float getImportance() const;
     void setImportance(float);
 
-    std::string getInfoURL() const;
+    const std::string& getInfoURL() const;
     void setInfoURL(const std::string&);
 
     bool isLabelColorOverridden() const { return overrideLabelColor; }

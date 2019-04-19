@@ -40,14 +40,11 @@ using namespace Eigen;
 using namespace std;
 
 
-// 100 Gly - on the order of the current size of the universe
-const float DSO_OCTREE_ROOT_SIZE   = 1.0e11f;
+constexpr const float DSO_OCTREE_MAGNITUDE   = 8.0f;
+//constexpr const float DSO_EXTRA_ROOM         = 0.01f; // Reserve 1% capacity for extra DSOs
+                                                      // (useful as a complement of binary loaded DSOs)
 
-static const float DSO_OCTREE_MAGNITUDE   = 8.0f;
-//static const float DSO_EXTRA_ROOM         = 0.01f; // Reserve 1% capacity for extra DSOs
-                                                   // (useful as a complement of binary loaded DSOs)
-
-const char* DSODatabase::FILE_HEADER      = "CEL_DSOs";
+constexpr char FILE_HEADER[]                 = "CEL_DSOs";
 
 // Used to sort DSO pointers by catalog number
 struct PtrCatalogNumberOrderingPredicate
@@ -222,6 +219,8 @@ bool DSODatabase::load(istream& in, const string& resourcePath)
     Tokenizer tokenizer(&in);
     Parser    parser(&tokenizer);
 
+    bindtextdomain(resourcePath.c_str(), resourcePath.c_str()); // domain name is the same as resource path
+
     while (tokenizer.nextToken() != Tokenizer::TokenEnd)
     {
         string objType;
@@ -278,6 +277,7 @@ bool DSODatabase::load(istream& in, const string& resourcePath)
 
         if (obj != nullptr && obj->load(objParams, resourcePath))
         {
+            obj->loadCategories(objParams, DataDisposition::Add, resourcePath);
             delete objParamsValue;
 
             // Ensure that the DSO array is large enough

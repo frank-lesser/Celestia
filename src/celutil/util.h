@@ -15,31 +15,28 @@
 #include <string>
 #include <iostream>
 #include <functional>
+#include <libintl.h>
 
 // gettext / libintl setup
 #ifndef _ /* unless somebody already took care of this */
 #define _(string) gettext (string)
 #endif
 #ifndef gettext_noop
-#define  gettext_noop(string) string
+#define gettext_noop(string) string
 #endif
 
 #ifdef _WIN32
-
-#include "libintl.h"
-
-#elif defined(TARGET_OS_MAC)
-
-#ifndef gettext
-#include "POSupport.h"
-#define gettext(s)      localizedUTF8String(s)
-#define dgettext(d,s)   localizedUTF8StringWithDomain(d,s)
+// POSIX provides an extension to printf family to reorder their arguments,
+// so GNU GetText provides own replacement for them on windows platform
+#ifdef fprintf
+#undef fprintf
 #endif
-
-#else
-
-#include <libintl.h>
-
+#ifdef printf
+#undef printf
+#endif
+#ifdef sprintf
+#undef sprintf
+#endif
 #endif
 
 extern int compareIgnoringCase(const std::string& s1, const std::string& s2);

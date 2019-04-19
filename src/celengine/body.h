@@ -10,6 +10,7 @@
 #ifndef _CELENGINE_BODY_H_
 #define _CELENGINE_BODY_H_
 
+#include <celengine/catentry.h>
 #include <celengine/surface.h>
 #include <celengine/star.h>
 #include <celengine/location.h>
@@ -24,6 +25,7 @@
 #include <map>
 #include <list>
 
+class Selection;
 class ReferenceFrame;
 class Body;
 class FrameTree;
@@ -103,13 +105,13 @@ class RingSystem
 };
 
 
-class Body
+class Body : public CatEntry
 {
  public:
      EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
      Body(PlanetarySystem*, const std::string& name);
-    ~Body();
+     virtual ~Body();
 
     // Object class enumeration:
     // All of these values must be powers of two so that they can
@@ -182,6 +184,7 @@ class Body
         AlwaysVisible      = 2,
     };
 
+    virtual Selection toSelection();
     void setDefaultProperties();
 
     PlanetarySystem* getSystem() const;
@@ -212,8 +215,21 @@ class Body
 
     float getMass() const;
     void setMass(float);
-    float getAlbedo() const;
-    void setAlbedo(float);
+    float getDensity() const;
+    void setDensity(float);
+
+    // Albedo functions and temperature
+    /* [[deprecated]] */ float getAlbedo() const;
+    /* [[deprecated]] */ void setAlbedo(float);
+    float getGeomAlbedo() const;
+    void setGeomAlbedo(float);
+    float getBondAlbedo() const;
+    void setBondAlbedo(float);
+    float getTemperature(double t = 0) const;
+    void setTemperature(float);
+    float getTempDiscrepancy() const;
+    void setTempDiscrepancy(float);
+
     int getClassification() const;
     void setClassification(int);
     const std::string& getInfoURL() const;
@@ -311,6 +327,9 @@ class Body
     Color getOrbitColor() const { return orbitColor; }
     void setOrbitColor(const Color&);
 
+    Color getCometTailColor() const { return cometTailColor; }
+    void setCometTailColor(const Color& c);
+
     int getOrbitClassification() const;
 
     enum
@@ -356,7 +375,12 @@ class Body
     float radius{ 1.0f };
     Eigen::Vector3f semiAxes{ Eigen::Vector3f::Ones() };
     float mass{ 0.0f };
-    float albedo{ 0.5f };
+    float density{ 0.0f };
+    float geomAlbedo{ 0.5f };
+    float bondAlbedo{ 0.5f };
+    float temperature{ 0.0f };
+    float tempDiscrepancy{ 0.0f };
+
     Eigen::Quaternionf geometryOrientation{ Eigen::Quaternionf::Identity() };
 
     float cullingRadius{ 0.0f };
@@ -381,6 +405,7 @@ class Body
     std::list<ReferenceMark*>* referenceMarks{ nullptr };
 
     Color orbitColor;
+    Color cometTailColor{ 0.5f, 0.5f, 0.75f };
 
     bool visible{ true };
     bool clickable{ true };

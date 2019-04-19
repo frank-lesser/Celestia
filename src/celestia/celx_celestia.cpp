@@ -11,6 +11,8 @@
 
 #include "celtxf/texturefont.h"
 #include <fmt/printf.h>
+#include <celengine/category.h>
+#include <celengine/texture.h>
 #include "celx.h"
 #include "celx_internal.h"
 #include "celx_celestia.h"
@@ -21,6 +23,7 @@
 #include "celx_position.h"
 #include "celx_rotation.h"
 #include "celx_vector.h"
+#include "celx_category.h"
 #include "url.h"
 #include "imagecapture.h"
 #include "celestiacore.h"
@@ -1650,11 +1653,7 @@ static int celestia_newvector(lua_State* l)
     double y = Celx_SafeGetNumber(l, 3, AllErrors, "Second arg to celestia:newvector must be a number");
     double z = Celx_SafeGetNumber(l, 4, AllErrors, "Third arg to celestia:newvector must be a number");
 
-#ifdef __CELVEC__
-    vector_new(l, Vec3d(x,y,z));
-#else
     vector_new(l, Vector3d(x,y,z));
-#endif
 
     return 1;
 }
@@ -1701,11 +1700,7 @@ static int celestia_newrotation(lua_State* l)
         double x = Celx_SafeGetNumber(l, 3, AllErrors, "arguments to celestia:newrotation must either be (vec, number) or four numbers");
         double y = Celx_SafeGetNumber(l, 4, AllErrors, "arguments to celestia:newrotation must either be (vec, number) or four numbers");
         double z = Celx_SafeGetNumber(l, 5, AllErrors, "arguments to celestia:newrotation must either be (vec, number) or four numbers");
-#ifdef __CELVEC__
-        Quatd q(w, x, y, z);
-#else
         Quaterniond q(w, x, y, z);
-#endif
         rotation_new(l, q);
     }
     else
@@ -1717,12 +1712,7 @@ static int celestia_newrotation(lua_State* l)
             return 0;
         }
         double angle = Celx_SafeGetNumber(l, 3, AllErrors, "second argument to celestia:newrotation must be a number");
-#ifdef __CELVEC__
-        Quatd q;
-        q.setAxisAngle(*v, angle);
-#else
         Quaterniond q(AngleAxisd(angle, v->normalized()));
-#endif
         rotation_new(l, q);
     }
     return 1;
@@ -2283,8 +2273,10 @@ static int celestia_getparamstring(lua_State* l)
 
 static int celestia_loadtexture(lua_State* l)
 {
-    Celx_CheckArgs(l, 2, 2, "Need one argument for celestia:loadtexture()");
-    string s = Celx_SafeGetString(l, 2, AllErrors, "Argument to celestia:loadtexture() must be a string");
+    CelxLua celx(l);
+
+    celx.checkArgs(2, 2, "Need one argument for celestia:loadtexture()");
+    string s = celx.safeGetString(2, AllErrors, "Argument to celestia:loadtexture() must be a string");
     lua_Debug ar;
     lua_getstack(l, 1, &ar);
     lua_getinfo(l, "S", &ar);
@@ -2293,19 +2285,19 @@ static int celestia_loadtexture(lua_State* l)
     base_dir = base_dir.substr(0, base_dir.rfind('/')) + '/';
     Texture* t = LoadTextureFromFile(base_dir + s);
     if (t == nullptr) return 0;
-    texture_new(l, t);
-    return 1;
+    return celx.pushClass(t);
 }
 
 static int celestia_loadfont(lua_State* l)
 {
-    Celx_CheckArgs(l, 2, 2, "Need one argument for celestia:loadtexture()");
-    string s = Celx_SafeGetString(l, 2, AllErrors, "Argument to celestia:loadfont() must be a string");
+    CelxLua celx(l);
+
+    celx.checkArgs(2, 2, "Need one argument for celestia:loadtexture()");
+    string s = celx.safeGetString(2, AllErrors, "Argument to celestia:loadfont() must be a string");
     TextureFont* font = LoadTextureFont(s);
     if (font == nullptr) return 0;
     font->buildTexture();
-    font_new(l, font);
-    return 1;
+    return celx.pushClass(font);
 }
 
 TextureFont* getFont(CelestiaCore* appCore)
@@ -2315,14 +2307,15 @@ TextureFont* getFont(CelestiaCore* appCore)
 
 static int celestia_getfont(lua_State* l)
 {
-    Celx_CheckArgs(l, 1, 1, "No arguments expected to function celestia:getTitleFont");
+    CelxLua celx(l);
+
+    celx.checkArgs(1, 1, "No arguments expected to function celestia:getTitleFont");
 
     CelestiaCore* appCore = getAppCore(l, AllErrors);
     TextureFont* font = getFont(appCore);
     if (font == nullptr)
         return 0;
-    font_new(l, font);
-    return 1;
+    return celx.pushClass(font);
 }
 
 TextureFont* getTitleFont(CelestiaCore* appCore)
@@ -2332,14 +2325,15 @@ TextureFont* getTitleFont(CelestiaCore* appCore)
 
 static int celestia_gettitlefont(lua_State* l)
 {
-    Celx_CheckArgs(l, 1, 1, "No arguments expected to function celestia:getTitleFont");
+    CelxLua celx(l);
+
+    celx.checkArgs(1, 1, "No arguments expected to function celestia:getTitleFont");
 
     CelestiaCore* appCore = getAppCore(l, AllErrors);
     TextureFont* font = getTitleFont(appCore);
     if (font == nullptr)
         return 0;
-    font_new(l, font);
-    return 1;
+    return celx.pushClass(font);
 }
 
 static int celestia_settimeslice(lua_State* l)
@@ -2387,19 +2381,124 @@ static int celestia_setluahook(lua_State* l)
     return 0;
 }
 
+static int celestia_newcategory(lua_State *l)
+{
+    CelxLua celx(l);
+
+    const char *emsg = "Argument of celestia:newcategory must be a string!";
+    const char *name = celx.safeGetString(2, AllErrors, emsg);
+    const char *domain = "";
+    if (name == nullptr)
+    {
+        celx.doError(emsg);
+        return 0;
+    }
+    if (celx.isString(2))
+        domain = celx.getString(2);
+    UserCategory *c = UserCategory::createRoot(name, domain);
+    if (c == nullptr)
+        return 0;
+    return celx.pushClass(c);
+}
+
+static int celestia_findcategory(lua_State *l)
+{
+    CelxLua celx(l);
+    
+    const char *emsg = "Argument of celestia:fndcategory must be a string.";
+    const char *name = celx.safeGetString(2, AllErrors, emsg);
+    if (name == nullptr)
+    {
+        celx.doError(emsg);
+        return 0;
+    }
+    UserCategory *c = UserCategory::find(name);
+    if (c == nullptr)
+        return 0;
+    return celx.pushClass(c);
+}
+
+static int celestia_deletecategory(lua_State *l)
+{
+    CelxLua celx(l);
+
+    bool ret;
+    const char *emsg = "Argument of celestia:deletecategory() must be a string or userdata.";
+    if (celx.isString(2))
+    {
+        const char *n = celx.safeGetString(2, AllErrors, emsg);
+        if (n == nullptr)
+        {
+            celx.doError(emsg);
+            return 0;
+        }
+        ret = UserCategory::deleteCategory(n);
+    }
+    else
+    {
+        UserCategory *c = *celx.safeGetClass<UserCategory*>(2, AllErrors, emsg);
+        if (c == nullptr)
+        {
+            celx.doError(emsg);
+            return 0;
+        }
+        ret = UserCategory::deleteCategory(c);
+    }
+    return celx.push(ret);
+}
+
+static int celestia_getcategories(lua_State *l)
+{
+    CelxLua celx(l);
+
+    UserCategory::CategoryMap map = UserCategory::getAll();
+
+    return celx.pushIterable<UserCategory*>(map);
+}
+
+static int celestia_getrootcategories(lua_State *l)
+{
+    CelxLua celx(l);
+
+    UserCategory::CategorySet set = UserCategory::getRoots();
+
+    return celx.pushIterable<UserCategory*>(set);
+}
+
+static int celestia_bindtranslationdomain(lua_State *l)
+{
+    CelxLua celx(l);
+
+    const char *domain = celx.safeGetNonEmptyString(2, AllErrors, "First argument of celestia:bindtranslationdomain must be domain name string.");
+    const char *dir = celx.safeGetString(3, AllErrors, "Second argument of celestia:bindtranslationdomain must be directory name string.");
+    const char *newdir = bindtextdomain(domain, dir);
+    if (newdir == nullptr)
+        return 0;
+    return celx.push(newdir);
+}
+
 void ExtendCelestiaMetaTable(lua_State* l)
 {
-    PushClass(l, Celx_Celestia);
+    CelxLua celx(l);
+
+    celx.pushClassName(Celx_Celestia);
     lua_rawget(l, LUA_REGISTRYINDEX);
     if (lua_type(l, -1) != LUA_TTABLE)
         cout << "Metatable for " << CelxLua::ClassNames[Celx_Celestia] << " not found!\n";
-    Celx_RegisterMethod(l, "log", celestia_log);
-    Celx_RegisterMethod(l, "settimeslice", celestia_settimeslice);
-    Celx_RegisterMethod(l, "setluahook", celestia_setluahook);
-    Celx_RegisterMethod(l, "getparamstring", celestia_getparamstring);
-    Celx_RegisterMethod(l, "getfont", celestia_getfont);
-    Celx_RegisterMethod(l, "gettitlefont", celestia_gettitlefont);
-    Celx_RegisterMethod(l, "loadtexture", celestia_loadtexture);
-    Celx_RegisterMethod(l, "loadfont", celestia_loadfont);
-    lua_pop(l, 1);
+    celx.registerMethod("log", celestia_log);
+    celx.registerMethod("settimeslice", celestia_settimeslice);
+    celx.registerMethod("setluahook", celestia_setluahook);
+    celx.registerMethod("getparamstring", celestia_getparamstring);
+    celx.registerMethod("getfont", celestia_getfont);
+    celx.registerMethod("gettitlefont", celestia_gettitlefont);
+    celx.registerMethod("loadtexture", celestia_loadtexture);
+    celx.registerMethod("loadfont", celestia_loadfont);
+    celx.registerMethod("loadfont", celestia_loadfont);
+    celx.registerMethod("newcategory", celestia_newcategory);
+    celx.registerMethod("findcategory", celestia_findcategory);
+    celx.registerMethod("deletecategory", celestia_deletecategory);
+    celx.registerMethod("getcategories", celestia_getcategories);
+    celx.registerMethod("getrootcategories", celestia_getrootcategories);
+    celx.registerMethod("bindtranslationdomain", celestia_bindtranslationdomain);
+    celx.pop(1);
 }

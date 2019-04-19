@@ -55,6 +55,7 @@
 #include "qtinfopanel.h"
 #include "qteventfinder.h"
 #include "qtsettimedialog.h"
+#include "qtgotoobjectdialog.h"
 //#include "qtvideocapturedialog.h"
 #include "celestia/scriptmenu.h"
 #include "celestia/url.h"
@@ -76,7 +77,6 @@
 using namespace std;
 
 
-QString DEFAULT_CONFIG_FILE = "celestia.cfg";
 QString BOOKMARKS_FILE = "bookmarks.xbel";
 
 const QSize DEFAULT_MAIN_WINDOW_SIZE(800, 600);
@@ -216,9 +216,7 @@ void CelestiaAppWindow::init(const QString& qConfigFileName,
 
     // Get the config file name
     string configFileName;
-    if (qConfigFileName.isEmpty())
-        configFileName = DEFAULT_CONFIG_FILE.toStdString();
-    else
+    if (!qConfigFileName.isEmpty())
         configFileName = qConfigFileName.toStdString();
 
     // Translate extras directories from QString -> std::string
@@ -226,7 +224,7 @@ void CelestiaAppWindow::init(const QString& qConfigFileName,
     for (const auto& dir : qExtrasDirectories)
         extrasDirectories.push_back(dir.toUtf8().data());
 
-#ifdef TARGET_OS_MAC
+#if defined(TARGET_OS_MAC) && defined(NATIVE_OSX_APP)
     static short domains[] = { kUserDomain, kLocalDomain, kNetworkDomain };
     int domain = 0;
     int domainCount = (sizeof domains / sizeof(short));
@@ -264,8 +262,8 @@ void CelestiaAppWindow::init(const QString& qConfigFileName,
 
     setWindowIcon(QIcon(":/icons/celestia.png"));
 
-    if (!m_appCore->initSimulation(&configFileName,
-                                   &extrasDirectories,
+    if (!m_appCore->initSimulation(configFileName,
+                                   extrasDirectories,
                                    progress))
     {
          // Error message is shown by celestiacore so we silently exit here.
@@ -850,6 +848,13 @@ void CelestiaAppWindow::gotoSelection()
 }
 
 
+void CelestiaAppWindow::gotoObject()
+{
+    GoToObjectDialog dlg(this, m_appCore);
+    dlg.exec();
+}
+
+
 void CelestiaAppWindow::slotPreferences()
 {
     PreferencesDialog dlg(this, m_appCore);
@@ -1210,8 +1215,6 @@ void CelestiaAppWindow::createMenus()
     connect(quitAct, SIGNAL(triggered()), this, SLOT(close()));
     fileMenu->addAction(quitAct);
 
-
-
     /****** Navigation menu ******/
     navMenu = menuBar()->addMenu(_("&Navigation"));
 
@@ -1227,6 +1230,19 @@ void CelestiaAppWindow::createMenus()
     connect(gotoAct, SIGNAL(triggered()), this, SLOT(gotoSelection()));
     navMenu->addAction(gotoAct);
 
+    QAction* gotoObjAct = new QAction(QIcon(":/icons/go-jump.png"), _("Goto Object..."), this);
+    connect(gotoObjAct, SIGNAL(triggered()), this, SLOT(gotoObject()));
+    navMenu->addAction(gotoObjAct);
+
+    QAction *copyAction = new QAction(QIcon(":/icons/clip_copy.png"), _("Copy search console text"), this);
+    copyAction->setShortcut(QString("F5"));
+    connect(copyAction, &QAction::triggered, this, &CelestiaAppWindow::copyText);
+    navMenu->addAction(copyAction);
+
+    QAction *pasteAction = new QAction(QIcon(":/icons/clip_paste.png"), _("Paste into search console"), this);
+    pasteAction->setShortcut(QString("F6"));
+    connect(pasteAction, &QAction::triggered, this, &CelestiaAppWindow::pasteText);
+    navMenu->addAction(pasteAction);
 
     /****** Time menu ******/
     timeMenu = menuBar()->addMenu(_("&Time"));
@@ -1397,10 +1413,10 @@ void CelestiaAppWindow::createMenus()
     m_appCore->getSimulation()->setSyncTime(check);
 
     // Set up the default time zone name and offset from UTC
-#ifndef _WIN32
     time_t curtime = time(nullptr);
     m_appCore->start(astro::UTCtoTDB((double) curtime / 86400.0 + (double) astro::Date(1970, 1, 1)));
 
+#ifndef _WIN32
     struct tm result;
     if (localtime_r(&curtime, &result))
     {
@@ -1573,4 +1589,18 @@ QMenu* CelestiaAppWindow::buildScriptsMenu()
 void ContextMenu(float x, float y, Selection sel)
 {
     MainWindowInstance->contextMenu(x, y, sel);
+}
+
+void CelestiaAppWindow::pasteText()
+{
+    QString text = QGuiApplication::clipboard()->text();
+    if (!text.isEmpty())
+        m_appCore->setTypedText(text.toUtf8().data());
+}
+
+void CelestiaAppWindow::copyText()
+{
+    QString text(m_appCore->getTypedText().c_str());
+    if (!text.isEmpty())
+        QGuiApplication::clipboard()->setText(text);
 }

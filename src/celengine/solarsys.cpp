@@ -11,14 +11,7 @@
 // of the License, or (at your option) any later version.
 
 #include <cassert>
-// #include <limits>
-
-#ifndef _WIN32
-#ifndef TARGET_OS_MAC
 #include <config.h>
-#endif /* ! TARGET_OS_MAC */
-#endif /* ! _WIN32 */
-
 #include <celutil/debug.h>
 #include <celmath/mathlib.h>
 #include <celutil/util.h>
@@ -38,15 +31,6 @@
 
 using namespace Eigen;
 using namespace std;
-
-
-enum Disposition
-{
-    AddObject,
-    ReplaceObject,
-    ModifyObject,
-};
-
 
 enum BodyType
 {
@@ -448,7 +432,7 @@ static bool CreateTimeline(Body* body,
                            Universe& universe,
                            Hash* planetData,
                            const string& path,
-                           Disposition disposition,
+                           DataDisposition disposition,
                            BodyType bodyType)
 {
     FrameTree* parentFrameTree = nullptr;
@@ -526,7 +510,7 @@ static bool CreateTimeline(Body* body,
     // replace the previous timeline if it contained more than one phase. Otherwise, the
     // properties of the single phase will be modified individually, for compatibility with
     // Celestia versions 1.5.0 and earlier.
-    if (disposition == ModifyObject)
+    if (disposition == DataDisposition::Modify)
     {
         const Timeline* timeline = body->getTimeline();
         if (timeline->phaseCount() == 1)
@@ -582,7 +566,7 @@ static bool CreateTimeline(Body* body,
     Orbit* newOrbit = CreateOrbit(orbitFrame->getCenter(), planetData, path, !orbitsPlanet);
     if (newOrbit == nullptr && orbit == nullptr)
     {
-        if (body->getTimeline() && disposition == ModifyObject)
+        if (body->getTimeline() && disposition == DataDisposition::Modify)
         {
             // The object definition is modifying an existing object with a multiple phase
             // timeline, but no orbit definition was given. This can happen for completely
@@ -634,7 +618,7 @@ static bool CreateTimeline(Body* body,
 
     // Something went wrong if the disposition isn't modify and no timeline
     // is to be created.
-    assert(disposition == ModifyObject || overrideOldTimeline);
+    assert(disposition == DataDisposition::Modify || overrideOldTimeline);
 
     if (overrideOldTimeline)
     {
@@ -698,12 +682,12 @@ static Body* CreateBody(const string& name,
                         Body* existingBody,
                         Hash* planetData,
                         const string& path,
-                        Disposition disposition,
+                        DataDisposition disposition,
                         BodyType bodyType)
 {
     Body* body = nullptr;
 
-    if (disposition == ModifyObject || disposition == ReplaceObject)
+    if (disposition == DataDisposition::Modify || disposition == DataDisposition::Replace)
     {
         body = existingBody;
     }
@@ -712,7 +696,7 @@ static Body* CreateBody(const string& name,
     {
         body = new Body(system, name);
         // If the body doesn't exist, always treat the disposition as 'Add'
-        disposition = AddObject;
+        disposition = DataDisposition::Add;
 
         // Set the default classification for new objects based on the body type.
         // This may be overridden by the Class property.
@@ -828,14 +812,37 @@ static Body* CreateBody(const string& name,
         body->setInfoURL(infoURL);
     }
 
-    double albedo = 0.5;
-    if (planetData->getNumber("Albedo", albedo))
-        body->setAlbedo((float) albedo);
+    double t;
+    if (planetData->getNumber("Albedo", t))
+    {
+        fmt::fprintf(cerr, "Deprecated parameter Albedo used in %s definition.\nUse GeomAlbedo instead.", name);
+        body->setGeomAlbedo((float) t);
+    }
+
+    if (planetData->getNumber("GeomAlbedo", t))
+        body->setGeomAlbedo((float) t);
+
+    if (planetData->getNumber("BondAlbedo", t))
+    {
+        if (t >= 0.0 && t <= 1.0)
+            body->setBondAlbedo((float) t);
+        else
+            fmt::fprintf(cerr, "Incorrect BondAlbedo value: %lf", t);
+    }
+
+    if (planetData->getNumber("Temperature", t))
+        body->setTemperature((float) t);
+
+    if (planetData->getNumber("TempDiscrepancy", t))
+        body->setTempDiscrepancy((float) t);
+
 
     // TODO - add mass units
-    double mass = 0.0;
-    if (planetData->getNumber("Mass", mass))
-        body->setMass((float) mass);
+    if (planetData->getNumber("Mass", t))
+        body->setMass((float) t);
+
+    if (planetData->getNumber("Density", t))
+       body->setDensity((float) t);
 
     Quaternionf orientation = Quaternionf::Identity();
     if (planetData->getRotation("Orientation", orientation))
@@ -844,7 +851,7 @@ static Body* CreateBody(const string& name,
     }
 
     Surface surface;
-    if (disposition == ModifyObject)
+    if (disposition == DataDisposition::Modify)
     {
         surface = body->getSurface();
     }
@@ -856,7 +863,7 @@ static Body* CreateBody(const string& name,
     body->setSurface(surface);
 
     {
-        string geometry("");
+        string geometry;
         if (planetData->getString("Mesh", geometry))
         {
             Vector3f geometryCenter(Vector3f::Zero());
@@ -893,7 +900,7 @@ static Body* CreateBody(const string& name,
                 assert(atmosData != nullptr);
 
                 Atmosphere* atmosphere = nullptr;
-                if (disposition == ModifyObject)
+                if (disposition == DataDisposition::Modify)
                 {
                     atmosphere = body->getAtmosphere();
                     if (atmosphere == nullptr)
@@ -949,7 +956,7 @@ static Body* CreateBody(const string& name,
                 }
 
                 body->setAtmosphere(*atmosphere);
-                if (disposition != ModifyObject)
+                if (disposition != DataDisposition::Modify)
                     delete atmosphere;
             }
         }
@@ -992,6 +999,13 @@ static Body* CreateBody(const string& name,
         }
     }
 
+    // Read comet tail color
+    Color cometTailColor;
+    if(planetData->getColor("TailColor", cometTailColor))
+    {
+        body->setCometTailColor(cometTailColor);
+    }
+
     bool clickable = true;
     if (planetData->getBoolean("Clickable", clickable))
     {
@@ -1022,11 +1036,11 @@ static Body* CreateReferencePoint(const string& name,
                                   Body* existingBody,
                                   Hash* refPointData,
                                   const string& path,
-                                  Disposition disposition)
+                                  DataDisposition disposition)
 {
     Body* body = nullptr;
 
-    if (disposition == ModifyObject || disposition == ReplaceObject)
+    if (disposition == DataDisposition::Modify || disposition == DataDisposition::Replace)
     {
         body = existingBody;
     }
@@ -1035,7 +1049,7 @@ static Body* CreateReferencePoint(const string& name,
     {
         body = new Body(system, name);
         // If the point doesn't exist, always treat the disposition as 'Add'
-        disposition = AddObject;
+        disposition = DataDisposition::Add;
     }
 
     body->setSemiAxes(Vector3f::Ones());
@@ -1077,25 +1091,27 @@ bool LoadSolarSystemObjects(istream& in,
     Tokenizer tokenizer(&in);
     Parser parser(&tokenizer);
 
+    bindtextdomain(directory.c_str(), directory.c_str()); // domain name is the same as resource path
+
     while (tokenizer.nextToken() != Tokenizer::TokenEnd)
     {
         // Read the disposition; if none is specified, the default is Add.
-        Disposition disposition = AddObject;
+        DataDisposition disposition = DataDisposition::Add;
         if (tokenizer.getTokenType() == Tokenizer::TokenName)
         {
             if (tokenizer.getNameValue() == "Add")
             {
-                disposition = AddObject;
+                disposition = DataDisposition::Add;
                 tokenizer.nextToken();
             }
             else if (tokenizer.getNameValue() == "Replace")
             {
-                disposition = ReplaceObject;
+                disposition = DataDisposition::Replace;
                 tokenizer.nextToken();
             }
             else if (tokenizer.getNameValue() == "Modify")
             {
-                disposition = ModifyObject;
+                disposition = DataDisposition::Modify;
                 tokenizer.nextToken();
             }
         }
@@ -1214,12 +1230,12 @@ bool LoadSolarSystemObjects(istream& in,
                 Body* existingBody = parentSystem->find(primaryName);
                 if (existingBody)
                 {
-                    if (disposition == AddObject)
+                    if (disposition == DataDisposition::Add)
                     {
                         errorMessagePrelude(tokenizer);
                         fmt::fprintf(cerr, _("warning duplicate definition of %s %s\n"), parentName, primaryName);
                     }
-                    else if (disposition == ReplaceObject)
+                    else if (disposition == DataDisposition::Replace)
                     {
                         existingBody->setDefaultProperties();
                     }
@@ -1231,7 +1247,9 @@ bool LoadSolarSystemObjects(istream& in,
                 else
                     body = CreateBody(primaryName, parentSystem, universe, existingBody, objectData, directory, disposition, bodyType);
 
-                if (body != nullptr && disposition == AddObject)
+                if (body != nullptr)
+                    body->loadCategories(objectData, disposition, directory);
+                if (body != nullptr && disposition == DataDisposition::Add)
                 {
                     vector<string>::const_iterator iter = names.begin();
                     iter++;
@@ -1258,6 +1276,7 @@ bool LoadSolarSystemObjects(istream& in,
             if (parent.body() != nullptr)
             {
                 Location* location = CreateLocation(objectData, parent.body());
+                location->loadCategories(objectData, disposition, directory);
                 if (location != nullptr)
                 {
                     location->setName(primaryName);

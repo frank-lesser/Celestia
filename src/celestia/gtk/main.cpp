@@ -10,10 +10,7 @@
  *  $Id: main.cpp,v 1.9 2008-01-21 04:55:19 suwalski Exp $
  */
 
-#ifdef HAVE_CONFIG_H
 #include <config.h>
-#endif /* HAVE_CONFIG_H */
-
 #include <iostream>
 #include <fstream>
 #include <cstdlib>
@@ -88,7 +85,7 @@ static GOptionEntry optionEntries[] =
     { "extrasdir", 'e', 0, G_OPTION_ARG_FILENAME_ARRAY, &extrasDir, "Additional \"extras\" directory", "directory" },
     { "fullscreen", 'f', 0, G_OPTION_ARG_NONE, &fullScreen, "Start full-screen", NULL },
     { "nosplash", 's', 0, G_OPTION_ARG_NONE, &noSplash, "Disable splash screen", NULL },
-    { NULL, NULL, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+    { NULL, '\0', 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
 };
 
 
@@ -365,11 +362,9 @@ int main(int argc, char* argv[])
     g_assert(app->renderer);
 
     /* Parse simulation arguments */
-    string cf;
+    string altConfig;
     if (configFile != NULL)
-        cf = string(configFile);
-
-    string* altConfig = (configFile != NULL) ? &cf : NULL;
+        altConfig = string(configFile);
 
     vector<string> configDirs;
     if (extrasDir != NULL)
@@ -384,11 +379,13 @@ int main(int argc, char* argv[])
     }
 
     /* Initialize the simulation */
-    if (!app->core->initSimulation(altConfig, &configDirs, ss->notifier))
+    if (!app->core->initSimulation(altConfig, configDirs, ss->notifier))
         return 1;
 
     app->simulation = app->core->getSimulation();
     g_assert(app->simulation);
+
+    app->renderer->setSolarSystemMaxDistance(app->core->getConfig()->SolarSystemMaxDistance);
 
     #ifdef GNOME
     /* Create the main window (GNOME) */

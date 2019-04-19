@@ -11,7 +11,6 @@
 
 #include <windows.h>
 #include <commctrl.h>
-#include "celutil/basictypes.h"
 #include "celengine/astro.h"
 #include "celutil/util.h"
 #include "celutil/winutil.h"
@@ -583,7 +582,7 @@ DatePicker::resize(WORD flags, int width, int height)
 LRESULT
 DatePicker::setSystemTime(DWORD flag, SYSTEMTIME* sysTime)
 {
-    date.year = (int16) sysTime->wYear;
+    date.year = (int16_t) sysTime->wYear;
     date.month = sysTime->wMonth;
     date.day = sysTime->wDay;
 

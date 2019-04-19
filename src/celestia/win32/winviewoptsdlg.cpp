@@ -54,8 +54,8 @@ static BOOL APIENTRY ViewOptionsProc(HWND hDlg,
     {
         Renderer* renderer = Dlg->appCore->getRenderer();
         uint64_t renderFlags = renderer->getRenderFlags();
-        uint32 labelMode = renderer->getLabelMode();
-        uint32 orbitMask = renderer->getOrbitMask();
+        uint32_t labelMode = renderer->getLabelMode();
+        uint32_t orbitMask = renderer->getOrbitMask();
 
         switch (LOWORD(wParam))
         {
@@ -303,11 +303,12 @@ ViewOptionsDialog::ViewOptionsDialog(HINSTANCE appInstance,
 }
 
 
-static void dlgCheck(HWND hDlg, WORD item, uint32 flags, uint32 f)
+static void dlgCheck(HWND hDlg, WORD item, uint32_t flags, uint32_t f)
 {
     SendDlgItemMessage(hDlg, item, BM_SETCHECK,
                        ((flags & f) != 0) ? BST_CHECKED : BST_UNCHECKED, 0);
 }
+
 
 void ViewOptionsDialog::SetControls(HWND hDlg)
 {
@@ -347,7 +348,8 @@ void ViewOptionsDialog::SetControls(HWND hDlg)
         (renderFlags & Renderer::ShowOpenClusters)? BST_CHECKED:BST_UNCHECKED, 0);
     SendDlgItemMessage(hDlg, IDC_SHOWNIGHTSIDELIGHTS, BM_SETCHECK,
         (renderFlags & Renderer::ShowNightMaps)? BST_CHECKED:BST_UNCHECKED, 0);
-    dlgCheck(hDlg, IDC_SHOWORBITS,       renderFlags, Renderer::ShowOrbits);
+    SendDlgItemMessage(hDlg, IDC_SHOWORBITS, BM_SETCHECK,
+        (renderFlags & Renderer::ShowOrbits) != 0 ? BST_CHECKED : BST_UNCHECKED, 0);
     dlgCheck(hDlg, IDC_PLANETORBITS,     orbitMask,   Body::Planet);
     dlgCheck(hDlg, IDC_DWARFPLANETORBITS,orbitMask,   Body::DwarfPlanet);
     dlgCheck(hDlg, IDC_MOONORBITS,       orbitMask,   Body::Moon);

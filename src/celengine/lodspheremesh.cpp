@@ -13,17 +13,13 @@
 #include <iostream>
 #include <algorithm>
 #include <celmath/mathlib.h>
-#ifdef __CELVEC__
-#include <celmath/vecmath.h>
-#endif
 #include <GL/glew.h>
 #include "vecgl.h"
 #include "lodspheremesh.h"
+#include "shadermanager.h"
 
 using namespace std;
-#ifndef __CELVEC__
 using namespace Eigen;
-#endif
 
 //#define SHOW_PATCH_VISIBILITY
 //#define SHOW_FRUSTUM
@@ -51,7 +47,7 @@ static const int MaxPatchesShown = 4096;
 static int visiblePatches[MaxPatchesShown];
 #endif
 
-#ifndef __CELVEC__
+
 // TODO: figure out how to use std eigen's methods instead
 static Vector3f intersect3(const Frustum::PlaneType& p0,
                            const Frustum::PlaneType& p1,
@@ -67,8 +63,6 @@ static Vector3f intersect3(const Frustum::PlaneType& p0,
             p1.offset() * p2.normal().cross(p0.normal()) +
             p2.offset() * p0.normal().cross(p1.normal())) * (1.0f / d);
 }
-#endif
-
 
 static void InitTrigArrays()
 {
@@ -139,37 +133,24 @@ LODSphereMesh::~LODSphereMesh()
 }
 
 
-#ifdef __CELVEC__
-static Point3f spherePoint(int theta, int phi)
-{
-    return Point3f(cosPhi[phi] * cosTheta[theta],
-                   sinPhi[phi],
-                   cosPhi[phi] * sinTheta[theta]);
-}
-#else
 static Vector3f spherePoint(int theta, int phi)
 {
     return Vector3f(cosPhi[phi] * cosTheta[theta],
                     sinPhi[phi],
                     cosPhi[phi] * sinTheta[theta]);
 }
-#endif
 
 
-void LODSphereMesh::render(const GLContext& context,
-                           const Frustum& frustum,
+void LODSphereMesh::render(const Frustum& frustum,
                            float pixWidth,
                            Texture** tex,
                            int nTextures)
 {
-    render(context,
-           Normals | TexCoords0, frustum, pixWidth, tex,
-           nTextures);
+    render(Normals | TexCoords0, frustum, pixWidth, tex, nTextures);
 }
 
 
-void LODSphereMesh::render(const GLContext& context,
-                           unsigned int attributes,
+void LODSphereMesh::render(unsigned int attributes,
                            const Frustum& frustum,
                            float pixWidth,
                            Texture* tex0,
@@ -188,12 +169,11 @@ void LODSphereMesh::render(const GLContext& context,
         textures[nTextures++] = tex2;
     if (tex3 != nullptr)
         textures[nTextures++] = tex3;
-    render(context, attributes, frustum, pixWidth, textures, nTextures);
+    render(attributes, frustum, pixWidth, textures, nTextures);
 }
 
 
-void LODSphereMesh::render(const GLContext& context,
-                           unsigned int attributes,
+void LODSphereMesh::render(unsigned int attributes,
                            const Frustum& frustum,
                            float pixWidth,
                            Texture** tex,
@@ -235,7 +215,7 @@ void LODSphereMesh::render(const GLContext& context,
         nTextures = 0;
 
 
-    RenderInfo ri(step, attributes, frustum, context);
+    RenderInfo ri(step, attributes, frustum);
 
     // If one of the textures is split into subtextures, we may have to
     // use extra patches, since there can be at most one subtexture per patch.
@@ -359,6 +339,9 @@ void LODSphereMesh::render(const GLContext& context,
 
     glDisableClientState(GL_COLOR_ARRAY);
 
+    if ((attributes & Tangents) != 0)
+        glEnableVertexAttribArray(CelestiaGLProgram::TangentAttributeIndex);
+
     if (split == 1)
     {
         renderSection(0, 0, thetaExtent, ri);
@@ -370,32 +353,6 @@ void LODSphereMesh::render(const GLContext& context,
 
         // Compute the vertices of the view frustum.  These will be used for
         // culling patches.
-#ifdef __CELVEC__
-        ri.fp[0] = Planef::intersection(frustum.getPlane(Frustum::Near),
-                                        frustum.getPlane(Frustum::Top),
-                                        frustum.getPlane(Frustum::Left));
-        ri.fp[1] = Planef::intersection(frustum.getPlane(Frustum::Near),
-                                        frustum.getPlane(Frustum::Top),
-                                        frustum.getPlane(Frustum::Right));
-        ri.fp[2] = Planef::intersection(frustum.getPlane(Frustum::Near),
-                                        frustum.getPlane(Frustum::Bottom),
-                                        frustum.getPlane(Frustum::Left));
-        ri.fp[3] = Planef::intersection(frustum.getPlane(Frustum::Near),
-                                        frustum.getPlane(Frustum::Bottom),
-                                        frustum.getPlane(Frustum::Right));
-        ri.fp[4] = Planef::intersection(frustum.getPlane(Frustum::Far),
-                                        frustum.getPlane(Frustum::Top),
-                                        frustum.getPlane(Frustum::Left));
-        ri.fp[5] = Planef::intersection(frustum.getPlane(Frustum::Far),
-                                        frustum.getPlane(Frustum::Top),
-                                        frustum.getPlane(Frustum::Right));
-        ri.fp[6] = Planef::intersection(frustum.getPlane(Frustum::Far),
-                                        frustum.getPlane(Frustum::Bottom),
-                                        frustum.getPlane(Frustum::Left));
-        ri.fp[7] = Planef::intersection(frustum.getPlane(Frustum::Far),
-                                        frustum.getPlane(Frustum::Bottom),
-                                        frustum.getPlane(Frustum::Right));
-#else
         ri.fp[0] = intersect3(frustum.plane(Frustum::Near),
                               frustum.plane(Frustum::Top),
                               frustum.plane(Frustum::Left));
@@ -420,7 +377,6 @@ void LODSphereMesh::render(const GLContext& context,
         ri.fp[7] = intersect3(frustum.plane(Frustum::Far),
                               frustum.plane(Frustum::Bottom),
                               frustum.plane(Frustum::Right));
-#endif
 
 
 #ifdef SHOW_PATCH_VISIBILITY
@@ -449,6 +405,9 @@ void LODSphereMesh::render(const GLContext& context,
     glDisableClientState(GL_VERTEX_ARRAY);
     if ((attributes & Normals) != 0)
         glDisableClientState(GL_NORMAL_ARRAY);
+
+    if ((attributes & Tangents) != 0)
+        glDisableVertexAttribArray(CelestiaGLProgram::TangentAttributeIndex);
 
     for (i = 0; i < nTextures; i++)
     {
@@ -580,25 +539,6 @@ int LODSphereMesh::renderPatches(int phi0, int theta0,
     // the rest of the sphere.  If the view frustum lies entirely
     // on the side of the plane that does not contain the sphere
     // patch, we cull the patch.
-#ifdef __CELVEC__
-    Point3f p0 = spherePoint(theta0, phi0);
-    Point3f p1 = spherePoint(theta0 + thetaExtent, phi0);
-    Point3f p2 = spherePoint(theta0 + thetaExtent,
-                             phi0 + phiExtent);
-    Point3f p3 = spherePoint(theta0, phi0 + phiExtent);
-    Vec3f v0 = p1 - p0;
-    Vec3f v2 = p3 - p2;
-    Vec3f normal;
-    if (v0.lengthSquared() > v2.lengthSquared())
-        normal = (p0 - p3) ^ v0;
-    else
-        normal = (p2 - p1) ^ v2;
-
-    // If the normal is near zero length, something's going wrong
-    assert(normal.length() != 0.0f);
-    normal.normalize();
-    Planef separatingPlane(normal, p0);
-#else
     Vector3f p0 = spherePoint(theta0, phi0);
     Vector3f p1 = spherePoint(theta0 + thetaExtent, phi0);
     Vector3f p2 = spherePoint(theta0 + thetaExtent,
@@ -617,17 +557,12 @@ int LODSphereMesh::renderPatches(int phi0, int theta0,
     assert(normal.norm() != 0.0f);
     normal.normalize();
     Frustum::PlaneType separatingPlane(normal, p0);
-#endif
 
     bool outside = true;
 #if 1
     for (int k = 0; k < 8; k++)
     {
-#ifdef __CELVEC__
-        if (separatingPlane.distanceTo(ri.fp[k]) > 0.0f)
-#else
         if (separatingPlane.absDistance(ri.fp[k]) > 0.0f)
-#endif
         {
             outside = false;
             break;
@@ -648,28 +583,15 @@ int LODSphereMesh::renderPatches(int phi0, int theta0,
                                       phi0 + phiExtent / 2);
 #else
     // . . . or is the average of the points better?
-#ifdef __CELVEC__
-    Point3f patchCenter = Point3f(p0.x + p1.x + p2.x + p3.x,
-                                  p0.y + p1.y + p2.y + p3.y,
-                                  p0.z + p1.z + p2.z + p3.z) * 0.25f;
-#else
     Vector3f patchCenter = Vector3f(p0.x() + p1.x() + p2.x() + p3.x(),
                                     p0.y() + p1.y() + p2.y() + p3.y(),
                                     p0.z() + p1.z() + p2.z() + p3.z()) * 0.25f;
 #endif
-#endif
     float boundingRadius = 0.0f;
-#ifdef __CELVEC__
-    boundingRadius = max(boundingRadius, patchCenter.distanceTo(p0));
-    boundingRadius = max(boundingRadius, patchCenter.distanceTo(p1));
-    boundingRadius = max(boundingRadius, patchCenter.distanceTo(p2));
-    boundingRadius = max(boundingRadius, patchCenter.distanceTo(p3));
-#else
     boundingRadius = max(boundingRadius, (patchCenter - p0).norm()); // patchCenter.distanceTo(p0)
     boundingRadius = max(boundingRadius, (patchCenter - p1).norm());
     boundingRadius = max(boundingRadius, (patchCenter - p2).norm());
     boundingRadius = max(boundingRadius, (patchCenter - p3).norm());
-#endif
     if (ri.frustum.testSphere(patchCenter, boundingRadius) == Frustum::Outside)
         outside = true;
 
@@ -726,6 +648,13 @@ void LODSphereMesh::renderSection(int phi0, int theta0, int extent,
         if (nTexturesUsed > 1)
             glClientActiveTexture(GL_TEXTURE0 + tc);
         glTexCoordPointer(2, GL_FLOAT, stride,  vertexBase + (tc * 2) + texCoordOffset);
+    }
+
+    if ((ri.attributes & Tangents) != 0)
+    {
+        glVertexAttribPointer(CelestiaGLProgram::TangentAttributeIndex,
+                              3, GL_FLOAT, GL_FALSE,
+                              stride, vertexBase + 3); // 3 == tangentOffset
     }
 
     // assert(ri.step >= minStep);
