@@ -16,13 +16,16 @@
 #include <celengine/universe.h>
 #include <celengine/observer.h>
 #include <celengine/selection.h>
+#ifdef USE_GLCONTEXT
 #include <celengine/glcontext.h>
+#endif
 #include <celengine/starcolors.h>
 #include <celengine/rendcontext.h>
 #include <celtxf/texturefont.h>
 #include <vector>
 #include <list>
 #include <string>
+#include "vertexobject.h"
 
 
 class RendererWatcher;
@@ -103,7 +106,11 @@ class Renderer
         double linearFadeFraction;
     };
 
+#ifdef USE_GLCONTEXT
     bool init(GLContext*, int, int, DetailOptions&);
+#else
+    bool init(int, int, DetailOptions&);
+#endif
     void shutdown() {};
     void resize(int, int);
 
@@ -189,6 +196,14 @@ class Renderer
         StarStyleCount   = 3,
     };
 
+    // Pixel formats for image and video capture.
+    // Currently we map them 1:1 to GL
+    enum class PixelFormat
+    {
+        RGB = GL_RGB,
+        BGR_EXT = GL_BGR_EXT
+    };
+
     // constants
     constexpr static const uint64_t DefaultRenderFlags =
                                           Renderer::ShowStars          |
@@ -231,11 +246,17 @@ class Renderer
     void setOrbitMask(int);
     int getScreenDpi() const;
     void setScreenDpi(int);
+    void getScreenSize(int* x, int* y, int* w, int* h) const;
+    void getScreenSize(std::array<int, 4>& viewport) const;
     const ColorTemperatureTable* getStarColorTable() const;
     void setStarColorTable(const ColorTemperatureTable*);
     bool getVideoSync() const;
     void setVideoSync(bool);
     void setSolarSystemMaxDistance(float);
+
+    bool captureFrame(int, int, int, int, PixelFormat format, unsigned char*, bool = false) const;
+
+    void renderMarker(MarkerRepresentation::Symbol symbol, float size, const Color& color);
 
 #ifdef USE_HDR
     bool getBloomEnabled();
@@ -245,7 +266,9 @@ class Renderer
     float getBrightness();
 #endif
 
+#ifdef USE_GLCONTEXT
     GLContext* getGLContext() { return context; }
+#endif
 
     void setStarStyle(StarStyle);
     StarStyle getStarStyle() const;
@@ -442,14 +465,14 @@ class Renderer
     void renderSkyGrids(const Observer& observer);
     void renderSelectionPointer(const Observer& observer,
                                 double now,
-                                const Frustum& viewFrustum,
+                                const celmath::Frustum& viewFrustum,
                                 const Selection& sel);
 
     void renderAsterisms(const Universe&, float);
     void renderBoundaries(const Universe&, float);
 
     void buildRenderLists(const Eigen::Vector3d& astrocentricObserverPos,
-                          const Frustum& viewFrustum,
+                          const celmath::Frustum& viewFrustum,
                           const Eigen::Vector3d& viewPlaneNormal,
                           const Eigen::Vector3d& frameCenter,
                           const FrameTree* tree,
@@ -457,10 +480,10 @@ class Renderer
                           double now);
     void buildOrbitLists(const Eigen::Vector3d& astrocentricObserverPos,
                          const Eigen::Quaterniond& observerOrientation,
-                         const Frustum& viewFrustum,
+                         const celmath::Frustum& viewFrustum,
                          const FrameTree* tree,
                          double now);
-    void buildLabelLists(const Frustum& viewFrustum,
+    void buildLabelLists(const celmath::Frustum& viewFrustum,
                          double now);
 
     void addRenderListEntries(RenderListEntry& rle,
@@ -587,7 +610,7 @@ class Renderer
     void renderOrbit(const OrbitPathListEntry&,
                      double now,
                      const Eigen::Quaterniond& cameraOrientation,
-                     const Frustum& frustum,
+                     const celmath::Frustum& frustum,
                      float nearDist,
                      float farDist);
 
@@ -626,7 +649,9 @@ class Renderer
 #endif
 
  private:
+#ifdef USE_GLCONTEXT
     GLContext* context;
+#endif
     ShaderManager* shaderManager{ nullptr };
 
     int windowWidth;
@@ -685,6 +710,7 @@ class Renderer
 
     int currentIntervalIndex{ 0 };
 
+    celgl::VertexObject markerVO{ GL_ARRAY_BUFFER, 0, GL_STATIC_DRAW };
 
  public:
 #if 0

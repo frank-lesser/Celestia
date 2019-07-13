@@ -12,7 +12,7 @@
 #include <celengine/selection.h>
 #include <cassert>
 #include <fmt/printf.h>
-#include "celestia.h"
+#include <config.h>
 #include "astro.h"
 #include "star.h"
 #include "texmanager.h"
@@ -20,6 +20,7 @@
 
 using namespace Eigen;
 using namespace std;
+using namespace celmath;
 
 
 // The value of the temperature of the sun is actually 5780, but the

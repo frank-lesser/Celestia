@@ -878,6 +878,11 @@ void actionRenderOrbits(GtkToggleAction* action, AppData* app)
     setRenderFlag(app, Renderer::ShowOrbits, gtk_toggle_action_get_active(action));
 }
 
+void actionRenderFadingOrbits(GtkToggleAction* action, AppData* app)
+{
+    setRenderFlag(app, Renderer::ShowFadingOrbits, gtk_toggle_action_get_active(action));
+}
+
 
 void actionRenderPlanets(GtkToggleAction* action, AppData* app)
 {
@@ -1118,8 +1123,8 @@ static void openScript(const char* filename, AppData* app)
 static void captureImage(const char* filename, AppData* app)
 {
     /* Get the dimensions of the current viewport */
-    int viewport[4];
-    glGetIntegerv(GL_VIEWPORT, viewport);
+    array<int, 4> viewport;
+    app->renderer->getScreenSize(viewport);
 
     bool success = false;
     ContentType type = DetermineFileType(filename);
@@ -1138,13 +1143,15 @@ static void captureImage(const char* filename, AppData* app)
     {
         success = CaptureGLBufferToJPEG(filename,
                                         viewport[0], viewport[1],
-                                        viewport[2], viewport[3]);
+                                        viewport[2], viewport[3],
+                                        app->renderer);
     }
     else if (type == Content_PNG)
     {
         success = CaptureGLBufferToPNG(filename,
                                        viewport[0], viewport[1],
-                                       viewport[2], viewport[3]);
+                                       viewport[2], viewport[3],
+                                       app->renderer);
     }
     else
     {
@@ -1175,10 +1182,10 @@ static void captureImage(const char* filename, AppData* app)
 static void captureMovie(const char* filename, int aspect, float fps, float quality, AppData* app)
 {
     /* Get the dimensions of the current viewport */
-    int viewport[4];
-    glGetIntegerv(GL_VIEWPORT, viewport);
+    array<int, 4> viewport;
+    app->renderer->getScreenSize(viewport);
 
-    MovieCapture* movieCapture = new OggTheoraCapture();
+    MovieCapture* movieCapture = new OggTheoraCapture(app->renderer);
     switch (aspect)
     {
     case 0:
@@ -1358,6 +1365,7 @@ void resyncRenderActions(AppData* app)
             case Renderer::ShowDiagrams: actionName = "RenderConstellations"; break;
             case Renderer::ShowCloudMaps: actionName = "RenderClouds"; break;
             case Renderer::ShowOrbits: actionName = "RenderOrbits"; break;
+            case Renderer::ShowFadingOrbits: actionName = "RenderFadingOrbits"; break;
             case Renderer::ShowCelestialSphere: actionName = "RenderCelestialGrid"; break;
             case Renderer::ShowNightMaps: actionName = "RenderNightLights"; break;
             case Renderer::ShowAtmospheres: actionName = "RenderAtmospheres"; break;

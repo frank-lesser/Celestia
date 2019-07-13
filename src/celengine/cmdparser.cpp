@@ -9,11 +9,13 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
-#include "celestia.h"
+#include <config.h>
 
 #include "astro.h"
 #include "cmdparser.h"
+#ifdef USE_GLCONTEXT
 #include "glcontext.h"
+#endif
 #include <celutil/util.h>
 #include <celutil/debug.h>
 #include <celmath/mathlib.h>
@@ -34,6 +36,7 @@
 #include <sstream>
 
 using namespace std;
+using namespace celmath;
 
 
 static uint64_t parseRenderFlags(string /*s*/);
@@ -699,7 +702,9 @@ Command* CommandParser::parseCommand()
 
         cmd = new CommandRenderPath(glcpath);
 #else
+#ifdef USE_GLCONTEXT
         cmd = new CommandRenderPath(GLContext::GLPath_GLSL);
+#endif
 #endif
     }
     else if (commandName == "splitview")

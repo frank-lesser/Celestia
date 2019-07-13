@@ -86,6 +86,7 @@ std::ofstream hdrlog;
 using namespace cmod;
 using namespace Eigen;
 using namespace std;
+using namespace celmath;
 
 #define FOV           45.0f
 #define NEAR_DIST      0.5f
@@ -319,16 +320,12 @@ PointStarVertexBuffer::~PointStarVertexBuffer()
 
 void PointStarVertexBuffer::startSprites()
 {
-    ShaderProperties shadprop;
-    shadprop.staticShader = true;
-    shadprop.texUsage = ShaderProperties::PointSprite   |
-                        ShaderProperties::NormalTexture;
-    CelestiaGLProgram* prog = renderer.getShaderManager().getShader(shadprop);
+    CelestiaGLProgram* prog = renderer.getShaderManager().getShader("star");
     if (prog == nullptr)
         return;
 
     prog->use();
-    prog->pointScale = 1.0f;
+    prog->samplerParam("starTex") = 0;
 
     unsigned int stride = sizeof(StarVertex);
     glEnableClientState(GL_VERTEX_ARRAY);
@@ -923,11 +920,17 @@ bool Renderer::OrbitPathListEntry::operator<(const Renderer::OrbitPathListEntry&
 }
 
 
+#ifdef USE_GLCONTEXT
 bool Renderer::init(GLContext* _context,
+#else
+bool Renderer::init(
+#endif
                     int winWidth, int winHeight,
                     DetailOptions& _detailOptions)
 {
+#ifdef USE_GLCONTEXT
     context = _context;
+#endif
     detailOptions = _detailOptions;
 
     // Initialize static meshes and textures common to all instances of Renderer
@@ -1779,7 +1782,8 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
             cachedOrbit->render(modelview,
                                 nearZ, farZ, viewFrustumPlaneNormals,
                                 subdivisionThreshold,
-                                windowStart, windowEnd);
+                                windowStart, windowEnd,
+                                orbitColor);
         }
         else
         {
@@ -1800,14 +1804,16 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
             cachedOrbit->render(modelview,
                                 nearZ, farZ, viewFrustumPlaneNormals,
                                 subdivisionThreshold,
-                                cachedOrbit->startTime(), t);
+                                cachedOrbit->startTime(), t,
+                                orbitColor);
         }
         else
         {
             // Show the entire trajectory
             cachedOrbit->render(modelview,
                                 nearZ, farZ, viewFrustumPlaneNormals,
-                                subdivisionThreshold);
+                                subdivisionThreshold,
+                                orbitColor);
         }
     }
 
@@ -2774,7 +2780,7 @@ void Renderer::draw(const Observer& observer,
             maxBodyMag = maxBodyMagPrev;
             saturationMag = maxBodyMag;
 #endif
-            float illumination = Math<float>::clamp(sunDir.dot(normal) + 0.2f);
+            float illumination = clamp(sunDir.dot(normal) + 0.2f);
 
             float lightness = illumination * density;
             faintestMag = faintestMag  - 15.0f * lightness;
@@ -3152,9 +3158,7 @@ void Renderer::draw(const Observer& observer,
                 posStar = brightestStar->getPosition(now);
             }
 
-            posStar.x /= scale;
-            posStar.y /= scale;
-            posStar.z /= scale;
+            posStar /= scale;
             Vec3d lightToBodyDir = posBody - posStar;
             Vec3d bodyToEyeDir = posEye - posBody;
 
@@ -3960,7 +3964,7 @@ void Renderer::renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
         auto hh = (float) sqrt(h);
         float u = i <= nHorizonRings ? 0.0f :
             (float) (i - nHorizonRings) / (float) (nRings - nHorizonRings);
-        float r = Mathf::lerp(h, 1.0f - (horizonHeight * 0.05f), 1.0f + horizonHeight);
+        float r = lerp(h, 1.0f - (horizonHeight * 0.05f), 1.0f + horizonHeight);
         float atten = 1.0f - hh;
 
         for (int j = 0; j < nSlices; j++)
@@ -5308,18 +5312,18 @@ void Renderer::renderPlanet(Body& body,
                     float ringFeatureSize = (projectedRingSize / ringTextureWidth) / approxRingDistance;
                     float relativeFeatureSize = lights.lights[li].apparentSize / ringFeatureSize;
                     //float areaLightLod = log(max(relativeFeatureSize, 1.0f)) / log(2.0f);
-                    float areaLightLod = celmath::log2(max(relativeFeatureSize, 1.0f));
+                    float areaLightLod = log2(max(relativeFeatureSize, 1.0f));
 
                     // Compute the LOD that would be automatically used by the GPU.
                     float texelToPixelRatio = ringTextureWidth / projectedRingSizeInPixels;
-                    float gpuLod = celmath::log2(texelToPixelRatio);
+                    float gpuLod = log2(texelToPixelRatio);
 
                     //float lod = max(areaLightLod, log(texelToPixelRatio) / log(2.0f));
                     float lod = max(areaLightLod, gpuLod);
 
                     // maxLOD is the index of the smallest mipmap (or close to it for non-power-of-two
                     // textures.) We can't make the lod larger than this.
-                    float maxLod = celmath::log2((float) ringsTex->getWidth());
+                    float maxLod = log2((float) ringsTex->getWidth());
                     if (maxLod > 1.0f)
                     {
                         // Avoid using the 1x1 mipmap, as it appears to cause 'bleeding' when
@@ -6223,10 +6227,12 @@ void Renderer::buildLabelLists(const Frustum& viewFrustum,
 
     for (auto& render_item : renderList)
     {
+        if (render_item.renderableType != RenderListEntry::RenderableBody)
+            continue;
+
         int classification = render_item.body->getOrbitClassification();
 
-        if (render_item.renderableType == RenderListEntry::RenderableBody &&
-            (classification & labelClassMask)                       &&
+        if ((classification & labelClassMask) != 0 &&
             viewFrustum.testSphere(render_item.position, render_item.radius) != Frustum::Outside)
         {
             const Body* body = render_item.body;
@@ -6408,7 +6414,9 @@ template <class OBJ, class PREC> class ObjectRenderer : public OctreeProcessor<O
  public:
     const Observer* observer{ nullptr };
 
+#ifdef USE_GLCONTEXT
     GLContext* context{ nullptr };
+#endif
     Renderer*  renderer{ nullptr };
 
     Eigen::Vector3f viewNormal;
@@ -6472,7 +6480,7 @@ class PointStarRenderer : public ObjectRenderer<Star, float>
     float cosFOV{ 1.0f };
 
     const ColorTemperatureTable* colorTemp{ nullptr };
-    float SolarSystemMaxDistance;
+    float SolarSystemMaxDistance { 1.0f };
 #ifdef DEBUG_HDR_ADAPT
     float minMag;
     float maxMag;
@@ -6686,7 +6694,9 @@ void Renderer::renderPointStars(const StarDatabase& starDB,
     Vector3d obsPos = observer.getPosition().toLy();
 
     PointStarRenderer starRenderer;
+#ifdef USE_GLCONTEXT
     starRenderer.context           = context;
+#endif
     starRenderer.renderer          = this;
     starRenderer.starDB            = &starDB;
     starRenderer.observer          = &observer;
@@ -6985,7 +6995,9 @@ void Renderer::renderDeepSkyObjects(const Universe&  universe,
 
     DSODatabase* dsoDB  = universe.getDSOCatalog();
 
+#ifdef USE_GLCONTEXT
     dsoRenderer.context          = context;
+#endif
     dsoRenderer.renderer         = this;
     dsoRenderer.dsoDB            = dsoDB;
     dsoRenderer.orientationMatrix= observer.getOrientationf().conjugate().toRotationMatrix();
@@ -7405,7 +7417,7 @@ void Renderer::renderAnnotations(const vector<Annotation>& annotations, FontStyl
             if (markerRep.symbol() == MarkerRepresentation::Crosshair)
                 renderCrosshair(size, realTime);
             else
-                markerRep.render(size);
+                markerRep.render(*this, size);
             glEnable(GL_TEXTURE_2D);
 
             if (!markerRep.label().empty())
@@ -7554,7 +7566,7 @@ Renderer::renderSortedAnnotations(vector<Annotation>::iterator iter,
             if (markerRep.symbol() == MarkerRepresentation::Crosshair)
                 renderCrosshair(size, realTime);
             else
-                markerRep.render(size);
+                markerRep.render(*this, size);
             glEnable(GL_TEXTURE_2D);
 
             if (!markerRep.label().empty())
@@ -7644,7 +7656,7 @@ Renderer::renderAnnotations(vector<Annotation>::iterator startIter,
             if (markerRep.symbol() == MarkerRepresentation::Crosshair)
                 renderCrosshair(size, realTime);
             else
-                markerRep.render(size);
+                markerRep.render(*this, size);
             glEnable(GL_TEXTURE_2D);
 
             if (!markerRep.label().empty())
@@ -7865,8 +7877,40 @@ void Renderer::updateBodyVisibilityMask()
     bodyVisibilityMask = flags;
 }
 
-void  Renderer::setSolarSystemMaxDistance(float t)
+void Renderer::setSolarSystemMaxDistance(float t)
 {
-    if (t >= 1.0f && t <= 10.0f)
-        SolarSystemMaxDistance = t;
+    SolarSystemMaxDistance = clamp(t, 1.0f, 10.0f);
+}
+
+void Renderer::getScreenSize(int* x, int* y, int* w, int* h) const
+{
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    if (x != nullptr)
+        *x = viewport[0];
+    if (y != nullptr)
+        *y = viewport[1];
+    if (w != nullptr)
+        *w = viewport[2];
+    if (h != nullptr)
+        *h = viewport[3];
+}
+
+void Renderer::getScreenSize(std::array<int, 4>& viewport) const
+{
+    static_assert(sizeof(int) == sizeof(GLint), "int and GLint size mismatch");
+    glGetIntegerv(GL_VIEWPORT, &viewport[0]);
+}
+
+constexpr GLenum toGLFormat(Renderer::PixelFormat format)
+{
+    return (GLenum) format;
+}
+
+bool Renderer::captureFrame(int x, int y, int w, int h, Renderer::PixelFormat format, unsigned char* buffer, bool back) const
+{
+    glReadBuffer(back ? GL_BACK : GL_FRONT);
+    glReadPixels(x, y, w, h, toGLFormat(format), GL_UNSIGNED_BYTE, (void*) buffer);
+
+    return glGetError == GL_NO_ERROR;
 }

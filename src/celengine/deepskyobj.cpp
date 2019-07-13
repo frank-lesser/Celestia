@@ -10,7 +10,7 @@
 
 #include <algorithm>
 #include <cstdio>
-#include "celestia.h"
+#include <config.h>
 #include <cassert>
 #include "astro.h"
 #include "deepskyobj.h"
@@ -25,6 +25,7 @@
 
 using namespace Eigen;
 using namespace std;
+using namespace celmath;
 
 
 void DeepSkyObject::setCatalogNumber(uint32_t n)

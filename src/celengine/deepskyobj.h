@@ -15,7 +15,9 @@
 #include <iostream>
 #include <celmath/ray.h>
 #include <celengine/catentry.h>
+#ifdef USE_GLCONTEXT
 #include <celengine/glcontext.h>
+#endif
 #include <celengine/parser.h>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -85,7 +87,7 @@ class DeepSkyObject : public CatEntry
 
     virtual const char* getObjTypeName() const = 0;
 
-    virtual bool pick(const Ray3d& ray,
+    virtual bool pick(const celmath::Ray3d& ray,
                       double& distanceToPicker,
                       double& cosAngleToBoundCenter) const = 0;
     virtual bool load(AssociativeArray*, const std::string& resPath);
@@ -95,7 +97,7 @@ class DeepSkyObject : public CatEntry
                         float pixelSize,
                         const Renderer*) = 0;
 
-    virtual unsigned int getRenderMask() const { return 0; }
+    virtual uint64_t getRenderMask() const { return 0; }
     virtual unsigned int getLabelMask() const { return 0; }
 
     enum : uint32_t

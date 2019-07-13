@@ -18,7 +18,7 @@
 #include <celutil/util.h>
 #include <celutil/bytes.h>
 #include <celengine/stardb.h>
-#include "celestia.h"
+#include <config.h>
 #include "astro.h"
 #include "parser.h"
 #include "parseobject.h"
@@ -28,6 +28,7 @@
 
 using namespace Eigen;
 using namespace std;
+using namespace celmath;
 
 
 constexpr const char HDCatalogPrefix[]        = "HD ";

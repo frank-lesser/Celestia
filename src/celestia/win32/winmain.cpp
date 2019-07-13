@@ -9,6 +9,7 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
+#include <config.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -31,7 +32,6 @@
 #include <celutil/util.h>
 #include <celutil/winutil.h>
 #include <celutil/filetype.h>
-#include <celengine/celestia.h>
 #include <celengine/astro.h>
 #include <celengine/cmdparser.h>
 #include <celengine/axisarrow.h>
@@ -88,7 +88,7 @@ static HDC deviceContext;
 
 static bool bReady = false;
 
-static LPTSTR CelestiaRegKey = "Software\\Shatters.net\\Celestia";
+static LPTSTR CelestiaRegKey = "Software\\celestia.space\\Celestia1.7-dev";
 
 HINSTANCE appInstance;
 HMODULE hRes;
@@ -186,7 +186,9 @@ struct AppPreferences
     string altSurfaceName;
     uint32_t textureResolution;
     Renderer::StarStyle starStyle;
+#ifdef USE_GLCONTEXT
     GLContext::GLRenderPath renderPath;
+#endif
     bool renderPathSet;
 };
 
@@ -431,11 +433,12 @@ static void ShowLocalTime(CelestiaCore* appCore)
 }
 
 
-static bool BeginMovieCapture(const std::string& filename,
+static bool BeginMovieCapture(const Renderer* renderer,
+                              const std::string& filename,
                               int width, int height,
                               float framerate)
 {
-    MovieCapture* movieCapture = new AVICapture();
+    MovieCapture* movieCapture = new AVICapture(renderer);
 
     bool success = movieCapture->start(filename, width, height, framerate);
     if (success)
@@ -2439,7 +2442,7 @@ static bool SetRegistryInt64(HKEY key, LPCTSTR value, uint64_t intVal)
     LONG err = RegSetValueEx(key,
                              value,
                              0,
-                             REG_DWORD,
+                             REG_QWORD,
                              reinterpret_cast<CONST BYTE*>(&intVal),
                              sizeof(intVal));
     return err == ERROR_SUCCESS;
@@ -2528,8 +2531,10 @@ static bool LoadPreferencesFromRegistry(LPTSTR regkey, AppPreferences& prefs)
     GetRegistryValue(key, "StarsColor", &prefs.starsColor, sizeof(prefs.starsColor));
     prefs.starStyle = Renderer::FuzzyPointStars;
     GetRegistryValue(key, "StarStyle", &prefs.starStyle, sizeof(prefs.starStyle));
+#ifdef USE_GLCONTEXT
     prefs.renderPath = GLContext::GLPath_GLSL;
     prefs.renderPathSet = GetRegistryValue(key, "RenderPath", &prefs.renderPath, sizeof(prefs.renderPath));
+#endif
 
     GetRegistryValue(key, "LastVersion", &prefs.lastVersion, sizeof(prefs.lastVersion));
     GetRegistryValue(key, "TextureResolution", &prefs.textureResolution, sizeof(prefs.textureResolution));
@@ -2587,7 +2592,9 @@ static bool SavePreferencesToRegistry(LPTSTR regkey, AppPreferences& prefs)
     SetRegistryInt(key, "LastVersion", prefs.lastVersion);
     SetRegistryInt(key, "StarStyle", prefs.starStyle);
     SetRegistryInt(key, "StarsColor", prefs.starsColor);
+#ifdef USE_GLCONTEXT
     SetRegistryInt(key, "RenderPath", prefs.renderPath);
+#endif
     SetRegistry(key, "AltSurface", prefs.altSurfaceName);
     SetRegistryInt(key, "TextureResolution", prefs.textureResolution);
 
@@ -2629,7 +2636,9 @@ static bool GetCurrentPreferences(AppPreferences& prefs)
         prefs.starsColor = ColorTable_Enhanced;
     if (current == GetStarColorTable(ColorTable_Blackbody_D65))
         prefs.starsColor = ColorTable_Blackbody_D65;
+#ifdef USE_GLCONTEXT
     prefs.renderPath = appCore->getRenderer()->getGLContext()->getRenderPath();
+#endif
     prefs.textureResolution = appCore->getRenderer()->getResolution();
 
     return true;
@@ -2672,8 +2681,8 @@ static void HandleCaptureImage(HWND hWnd)
         // Ofn.lpstrFileTitle contains just the filename with extension
 
         // Get the dimensions of the current viewport
-        int viewport[4];
-        glGetIntegerv(GL_VIEWPORT, viewport);
+        array<int,4> viewport;
+        appCore->getRenderer()->getScreenSize(viewport);
 
         bool success = false;
 
@@ -2719,13 +2728,15 @@ static void HandleCaptureImage(HWND hWnd)
         {
             success = CaptureGLBufferToJPEG(string(Ofn.lpstrFile),
                                             viewport[0], viewport[1],
-                                            viewport[2], viewport[3]);
+                                            viewport[2], viewport[3],
+                                            appCore->getRenderer());
         }
         else if (nFileType == 2)
         {
             success = CaptureGLBufferToPNG(string(Ofn.lpstrFile),
                                            viewport[0], viewport[1],
-                                           viewport[2], viewport[3]);
+                                           viewport[2], viewport[3],
+                                           appCore->getRenderer());
         }
         else
         {
@@ -2838,7 +2849,8 @@ static void HandleCaptureMovie(HWND hWnd)
         }
         else
         {
-            success = BeginMovieCapture(string(Ofn.lpstrFile),
+            success = BeginMovieCapture(appCore->getRenderer(),
+                                        string(Ofn.lpstrFile),
                                         MovieSizes[movieSize][0],
                                         MovieSizes[movieSize][1],
                                         MovieFramerates[movieFramerate]);
@@ -3494,12 +3506,14 @@ int APIENTRY WinMain(HINSTANCE hInstance,
         appCore->setDateFormat((astro::Date::Format) prefs.dateFormat);
         appCore->getSimulation()->getActiveObserver()->setDisplayedSurface(prefs.altSurfaceName);
         appCore->getRenderer()->setResolution(prefs.textureResolution);
+#ifdef USE_GLCONTEXT
         if (prefs.renderPathSet)
         {
             GLContext* glContext = appCore->getRenderer()->getGLContext();
             if (glContext->renderPathSupported(prefs.renderPath))
                 glContext->setRenderPath(prefs.renderPath);
         }
+#endif
     }
     else
     {

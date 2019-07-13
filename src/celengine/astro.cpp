@@ -15,7 +15,7 @@
 #include <utility>
 #include <ctime>
 #include <celmath/mathlib.h>
-#include "celestia.h"
+#include <config.h>
 #include "astro.h"
 #include "univcoord.h"
 #include <celutil/util.h>
@@ -23,6 +23,7 @@
 
 using namespace Eigen;
 using namespace std;
+using namespace celmath;
 
 const double astro::speedOfLight = 299792.458; // km/s
 
