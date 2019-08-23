@@ -17,6 +17,7 @@ endif()
 project(celestia)
 
 set(VERSION "1.7.0")
+set(DISPLAY_NAME "Celestia")
 #
 #
 #
@@ -38,13 +39,21 @@ endif()
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-if(NOT MSVC)
+if(NOT WIN32)
   # Qt requires -fPIC, so build all code with it
+  # It's always set on windows
   add_compile_options(-fPIC)
-  if(FAST_MATH)
+endif()
+
+if(FAST_MATH)
+  if(NOT MSVC)
     add_compile_options("-ffast-math")
+  else()
+    add_compile_options("/fp:fast")
   endif()
-else()
+endif()
+
+if(MSVC)
   # Disabled warnings
   # C4244, C4267, C4503: implicit type conversion to a smaller type
   # C4786: long names in templates
@@ -52,9 +61,9 @@ else()
   # Additional options
   # bigobj: generate more object sections than allowed by default
   add_compile_options("/wd4244" "/wd4267" "/wd4503" "/wd4800" "/bigobj")
-  if(FAST_MATH)
-    add_compile_options("/fp:fast")
-  endif()
+
+  # Fix the issue: https://github.com/CelestiaProject/Celestia/issues/364
+  add_definitions(-D_ENABLE_EXTENDED_ALIGNED_STORAGE)
 endif()
 
 if(UNIX AND (NOT APPLE) AND (NOT CYGWIN))
@@ -79,9 +88,10 @@ list(INSERT CMAKE_MODULE_PATH 0 "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 include(GNUInstallDirs)
 include(CheckIncludeFiles)
+include(CheckIncludeFileCXX)
 include(rpath)
 include(install_to_extras_subdir)
-if (NOT MSVC)
+if (NOT MSVC AND NOT MINGW)
   include(cotire)
 else()
   macro(cotire _target)
@@ -108,8 +118,9 @@ if(ENABLE_SPICE)
   if(NOT CSPICE_FOUND)
     message(STATUS "Using cspice submodule")
     add_subdirectory("${CMAKE_SOURCE_DIR}/thirdparty/Spice")
-
-    include_directories("${CMAKE_SOURCE_DIR}/thirdparty/Spice/include")
+    get_target_property(SPICE_INCLUDE_DIR Spice INCLUDE_DIRECTORIES)
+    include_directories(${SPICE_INCLUDE_DIR})
+    message(STATUS "Spice include directories: ${SPICE_INCLUDE_DIR}")
     add_library(CSPICE::CSPICE ALIAS Spice)
   endif()
   add_definitions(-DUSE_SPICE)
@@ -171,7 +182,6 @@ if(ENABLE_CELX)
   if(NOT LUAJIT_FOUND)
     find_package(Lua REQUIRED)
   endif()
-  add_definitions(-DLUA_VER=0x0${LUA_VERSION_MAJOR}0${LUA_VERSION_MINOR}00)
   include_directories(${LUA_INCLUDE_DIR})
   link_libraries(${LUA_LIBRARIES})
 endif()
@@ -184,34 +194,66 @@ foreach (_variableName ${_variableNames})
 endforeach()
 ]]#
 
-set(DATADIR "${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}")
-set(FULL_DATADIR "${CMAKE_INSTALL_FULL_DATADIR}/${PROJECT_NAME}")
+########### macOS Bundling ###############
+if(NATIVE_OSX_APP)
+  message(STATUS "Generating Info.plist for macOS Bundle")
+  configure_file(${CMAKE_SOURCE_DIR}/Info.plist.in ${CMAKE_BINARY_DIR}/Info.plist @ONLY)
+endif()
+
+if(NATIVE_OSX_APP)
+  set(CMAKE_INSTALL_PREFIX "${PROJECT_BINARY_DIR}/${PROJECT_NAME}.app/Contents")
+  set(CMAKE_INSTALL_FULL_LOCALEDIR "${CMAKE_INSTALL_PREFIX}/Resources/locale")
+  set(CMAKE_INSTALL_BINDIR "MacOS")
+  set(DATADIR "${CMAKE_INSTALL_PREFIX}/Resources")
+  set(FULL_DATADIR "${CMAKE_INSTALL_PREFIX}/Resources")
+else()
+  set(DATADIR "${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}")
+  set(FULL_DATADIR "${CMAKE_INSTALL_FULL_DATADIR}/${PROJECT_NAME}")
+endif()
 
 if (NOT GIT_COMMIT)
   find_program(GIT_FOUND git)
   if (GIT_FOUND)
-    execute_process(
-      COMMAND git log --pretty=format:"%h" -1
-      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-      OUTPUT_VARIABLE GIT_COMMIT
-    )
+    if (NOT MINGW)
+      execute_process(
+        COMMAND git log --pretty=format:"%h" -1
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE GIT_COMMIT
+      )
+    endif()
+    if (MINGW)
+      execute_process(
+        COMMAND git log --pretty=format:'%h' -1
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE GIT_COMMIT
+      )
+    endif()
     if ("${GIT_COMMIT}" STREQUAL "")
       set(GIT_COMMIT "unknown")
     endif()
   else()
     set(GIT_COMMIT "unknown")
   endif()
+  
+  if (MINGW)
+    set(GIT_COMMIT "\"${GIT_COMMIT}\"")
+  endif()
 endif()
 
 add_definitions(
   -DVERSION="${VERSION}"
-  -DLOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}"
   -DPACKAGE="celestia"
-  -DCONFIG_DATA_DIR="${FULL_DATADIR}"
-  -DHIP_DATA_DIR="${FULL_DATADIR}"
-  -DSPLASH_DIR="${FULL_DATADIR}/splash/"
   -DGIT_COMMIT=${GIT_COMMIT}
 )
+
+if(NOT NATIVE_OSX_APP)
+  add_definitions(
+    -DLOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}"
+    -DCONFIG_DATA_DIR="${FULL_DATADIR}"
+    -DHIP_DATA_DIR="${FULL_DATADIR}"
+    -DSPLASH_DIR="${FULL_DATADIR}/splash/"
+  )
+endif()
 
 if(WIN32)
   add_definitions(
@@ -225,18 +267,15 @@ if(WIN32)
 endif()
 
 if(APPLE)
-  # TARGET_OS_MAC should be replaced with __APPLE__
-  add_definitions(-DTARGET_OS_MAC)
-  # Dirty hack to prevent AIFF.h inclusion which provides `struct Marker`
-  # conflicting with out `class Marker`.
-  add_definitions(-D__AIFF__)
   if (NATIVE_OSX_APP)
     add_definitions(-DNATIVE_OSX_APP)
   endif()
 endif()
 
 string(TOLOWER "${CMAKE_BUILD_TYPE}" build_type_lc)
-if(NOT "${build_type_lc}" STREQUAL "debug")
+if("${build_type_lc}" STREQUAL "debug")
+  add_definitions(-D_DEBUG -DDEBUG)
+else()
   add_definitions(-DNO_DEBUG -DEIGEN_NO_DEBUG)
 endif()
 
@@ -250,7 +289,23 @@ include_directories("${CMAKE_SOURCE_DIR}/src" ${CMAKE_BINARY_DIR})
 # configure a header file to pass some of the CMake settings
 # to the source code
 check_include_files(byteswap.h HAVE_BYTESWAP_H)
+check_include_file_cxx(experimental/filesystem HAVE_EXPERIMENTAL_FILESYSTEM)
 configure_file("config.h.in" "config.h")
+
+
+if (HAVE_EXPERIMENTAL_FILESYSTEM)
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    find_library(CLANG_FS_LIBRARY "c++fs")
+    if (CLANG_FS_LIBRARY)
+      set(FS_LIBRARY c++fs)
+    else()
+      set(FS_LIBRARY stdc++fs)
+    endif()
+  elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(FS_LIBRARY stdc++fs)
+  endif()
+  link_libraries("${FS_LIBRARY}")
+endif()
 
 set(BASE_DATA_SOURCES
   demo.cel
@@ -261,6 +316,10 @@ set(BASE_DATA_SOURCES
 )
 install(FILES ${BASE_DATA_SOURCES} DESTINATION ${DATADIR})
 install(FILES "splash.png" DESTINATION "${DATADIR}/splash")
+
+if(NATIVE_OSX_APP)
+  install(FILES ${CMAKE_BINARY_DIR}/Info.plist DESTINATION .)
+endif()
 
 add_subdirectory(src)
 add_subdirectory(po)

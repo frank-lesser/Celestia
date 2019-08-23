@@ -15,8 +15,8 @@
 // #include <celutil/watchable.h>
 #include <celengine/solarsys.h>
 #include <celengine/overlay.h>
-#include <celengine/command.h>
-#include <celengine/execution.h>
+#include "command.h"
+#include "execution.h"
 #include <celengine/texture.h>
 #include <celengine/universe.h>
 #include <celengine/render.h>
@@ -203,14 +203,14 @@ class CelestiaCore // : public Watchable<CelestiaCore>
     class OverlayImage
     {
      public:
-        OverlayImage(string);
+        OverlayImage(fs::path, Overlay*);
         ~OverlayImage() { delete texture; }
         OverlayImage()               =default;
         OverlayImage(OverlayImage&)  =delete;
         OverlayImage(OverlayImage&&) =delete;
 
         void render(float, int, int);
-        inline bool isNewImage(const string& f) { return filename != f; }
+        inline bool isNewImage(const fs::path& f) { return filename != f; }
 
         void setStartTime(float t) { start = t; }
         void setDuration(float t) { duration = t; }
@@ -225,16 +225,17 @@ class CelestiaCore // : public Watchable<CelestiaCore>
         float offsetY{ 0.0f };
         float alpha{ 0.0f };
         bool  fitscreen{ false };
-        std::string filename;
+        fs::path filename;
         Texture* texture{ nullptr };
+        Overlay* overlay;
     };
 
  public:
     CelestiaCore();
     ~CelestiaCore();
 
-    bool initSimulation(const std::string& configFileName = "",
-                        const std::vector<std::string>& extrasDirs = {},
+    bool initSimulation(const fs::path& configFileName = fs::path(),
+                        const std::vector<fs::path>& extrasDirs = {},
                         ProgressNotifier* progressNotifier = nullptr);
     bool initRenderer();
     void start(double t);
@@ -303,7 +304,7 @@ class CelestiaCore // : public Watchable<CelestiaCore>
     bool isRecording();
 
     void runScript(CommandSequence*);
-    void runScript(const std::string& filename);
+    void runScript(const fs::path& filename);
     void cancelScript();
     void resumeScript();
 
@@ -376,7 +377,7 @@ class CelestiaCore // : public Watchable<CelestiaCore>
 
     void fatalError(const std::string&, bool visual = true);
 
-    void setScriptImage(float, float, float, float, const std::string&, bool);
+    void setScriptImage(float, float, float, float, const fs::path&, bool);
 
     const std::string& getTypedText() const { return typedText; }
     void setTypedText(const char *);
@@ -412,7 +413,11 @@ class CelestiaCore // : public Watchable<CelestiaCore>
     int messageVOffset{ 0 };
     double messageStart{ 0.0 };
     double messageDuration{ 0.0 };
-    Color textColor{ Color(1.0f, 1.0f, 1.0f) };
+    Color textColor{ 1.0f, 1.0f, 1.0f };
+
+    const Color frameColor{ 0.5f, 0.5f, 0.5f, 1.0f };
+    const Color activeFrameColor{ 0.5f, 0.5f, 1.0f, 1.0f };
+    const Color consoleColor{ 0.7f, 0.7f, 1.0f, 0.2f };
 
     OverlayImage *image{ nullptr };
 

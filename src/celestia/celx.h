@@ -12,18 +12,19 @@
 #ifndef _CELESTIA_CELX_H_
 #define _CELESTIA_CELX_H_
 
-#ifndef LUA_VER
-#define LUA_VER 0x050100
-#endif
-
 #include <iostream>
 #include <string>
 #include <vector>
 #include "lua.hpp"
+#include <celcompat/filesystem.h>
 #include <celutil/timer.h>
 #include <celengine/observer.h>
 
-#if LUA_VER < 0x050300
+#ifndef LUA_VERSION_NUM
+#define LUA_VERSION_NUM 501
+#endif
+
+#if LUA_VERSION_NUM < 503
 int lua_isinteger(lua_State *L, int index);
 #endif
 
@@ -38,8 +39,8 @@ public:
 
     lua_State* getState() const;
 
-    int loadScript(std::istream&, const std::string& streamname);
-    int loadScript(const std::string&);
+    int loadScript(std::istream&, const fs::path&);
+    int loadScript(const fs::path&);
     bool init(CelestiaCore*);
 
     std::string getErrorMessage();

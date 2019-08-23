@@ -21,8 +21,8 @@
 #include <celengine/boundaries.h>
 #include <celengine/overlay.h>
 #include <celengine/console.h>
-#include <celengine/execution.h>
-#include <celengine/cmdparser.h>
+#include "execution.h"
+#include "cmdparser.h"
 #include <celengine/multitexture.h>
 #ifdef USE_SPICE
 #include <celephem/spiceinterface.h>
@@ -33,10 +33,10 @@
 #include <celmath/geomutil.h>
 #include <celutil/util.h>
 #include <celutil/filetype.h>
-#include <celutil/directory.h>
 #include <celutil/formatnum.h>
 #include <celutil/debug.h>
 #include <celutil/utf8.h>
+#include <celcompat/filesystem.h>
 #include <Eigen/Geometry>
 #include <GL/glew.h>
 #include <iostream>
@@ -48,11 +48,15 @@
 #include <cstring>
 #include <cassert>
 #include <ctime>
+#include <set>
 #include <fmt/printf.h>
+#include <celutil/color.h>
+#include <celengine/vecgl.h>
 
 #ifdef CELX
 #include <celephem/scriptobject.h>
 #endif
+
 
 // TODO: proper gettext
 #define C_(a, b) (b)
@@ -322,9 +326,9 @@ CelestiaCore::~CelestiaCore()
 void CelestiaCore::readFavoritesFile()
 {
     // Set up favorites list
-    if (config->favoritesFile != "")
+    if (!config->favoritesFile.empty())
     {
-        ifstream in(config->favoritesFile, ios::in);
+        ifstream in(config->favoritesFile.string(), ios::in);
 
         if (in.good())
         {
@@ -339,9 +343,9 @@ void CelestiaCore::readFavoritesFile()
 
 void CelestiaCore::writeFavoritesFile()
 {
-    if (config->favoritesFile != "")
+    if (!config->favoritesFile.empty())
     {
-        ofstream out(config->favoritesFile, ios::out);
+        ofstream out(config->favoritesFile.string(), ios::out);
         if (out.good())
             WriteFavoritesList(*favorites, out);
     }
@@ -456,15 +460,15 @@ void CelestiaCore::runScript(CommandSequence* script)
 }
 
 
-void CelestiaCore::runScript(const string& filename)
+void CelestiaCore::runScript(const fs::path& filename)
 {
     cancelScript();
-    string localeFilename = LocaleFilename(filename);
+    auto localeFilename = LocaleFilename(filename);
     ContentType type = DetermineFileType(localeFilename);
 
     if (type == Content_CelestiaLegacyScript)
     {
-        ifstream scriptfile(localeFilename);
+        ifstream scriptfile(localeFilename.string());
         if (!scriptfile.good())
         {
             fatalError(_("Error opening script file."));
@@ -491,7 +495,7 @@ void CelestiaCore::runScript(const string& filename)
 #ifdef CELX
     else if (type == Content_CelestiaScript)
     {
-        ifstream scriptfile(localeFilename);
+        ifstream scriptfile(localeFilename.string());
         if (!scriptfile.good())
         {
             string errMsg;
@@ -505,7 +509,7 @@ void CelestiaCore::runScript(const string& filename)
             celxScript->init(this);
         }
 
-        int status = celxScript->loadScript(scriptfile, localeFilename);
+        int status = celxScript->loadScript(scriptfile, localeFilename.string()); // FIXME
         if (status != 0)
         {
             string errMsg = celxScript->getErrorMessage();
@@ -1144,7 +1148,7 @@ void CelestiaCore::charEntered(const char *c_p, int modifiers)
     {
         wchar_t wc = 0; // Null wide character
         UTF8Decode(c_p, 0, strlen(c_p), wc);
-#ifdef TARGET_OS_MAC
+#ifdef __APPLE__
         if ( wc && (!iscntrl(wc)) )
 #else
         if ( wc && (!iswcntrl(wc)) )
@@ -1344,7 +1348,7 @@ void CelestiaCore::charEntered(const char *c_p, int modifiers)
             {
                 MarkerRepresentation markerRep(MarkerRepresentation::Diamond);
                 markerRep.setSize(10.0f);
-                markerRep.setColor(Color(0.0f, 1.0f, 0.0f, 0.9f));
+                markerRep.setColor({0.0f, 1.0f, 0.0f, 0.9f});
 
                 sim->getUniverse()->markObject(sel, markerRep, 1);
             }
@@ -2095,7 +2099,7 @@ void CelestiaCore::start(double t)
     {
         // using the KdeAlerter in runScript would create an infinite loop,
         // break it here by resetting config->initScriptFile:
-        string filename = config->initScriptFile;
+        fs::path filename(config->initScriptFile);
         config->initScriptFile = "";
         runScript(filename);
     }
@@ -3249,28 +3253,17 @@ static void displaySelectionName(Overlay& overlay,
 #endif
 
 
-static void showViewFrame(const View* v, int width, int height)
-{
-    glBegin(GL_LINE_LOOP);
-    glVertex3f(v->x * width, v->y * height, 0.0f);
-    glVertex3f(v->x * width, (v->y + v->height) * height - 1, 0.0f);
-    glVertex3f((v->x + v->width) * width - 1, (v->y + v->height) * height - 1, 0.0f);
-    glVertex3f((v->x + v->width) * width - 1, v->y * height, 0.0f);
-    glEnd();
-}
-
-
 void CelestiaCore::setScriptImage(float duration,
                                   float xoffset,
                                   float yoffset,
                                   float alpha,
-                                  const string& filename,
+                                  const fs::path& filename,
                                   bool fitscreen)
 {
-    if (!image || !image->isNewImage(filename))
+    if (image == nullptr || image->isNewImage(filename))
     {
         delete image;
-        image = new CelestiaCore::OverlayImage(filename);
+        image = new CelestiaCore::OverlayImage(filename, overlay);
     }
     image->setStartTime((float) currentTime);
     image->setDuration(duration);
@@ -3280,17 +3273,17 @@ void CelestiaCore::setScriptImage(float duration,
 }
 
 
-CelestiaCore::OverlayImage::OverlayImage(string f)
+CelestiaCore::OverlayImage::OverlayImage(fs::path f, Overlay* o) :
+    filename(std::move(f)),
+    overlay(o)
 {
-    filename = std::move(f);
-    delete texture;
-    texture = LoadTextureFromFile(string("images/") + filename);
+    texture = LoadTextureFromFile(fs::path("images") / filename);
 }
 
 
 void CelestiaCore::OverlayImage::render(float curr_time, int width, int height)
 {
-    if (!texture || (curr_time >= start + duration))
+    if (texture == nullptr || (curr_time >= start + duration))
         return;
 
     float xSize = texture->getWidth();
@@ -3315,13 +3308,8 @@ void CelestiaCore::OverlayImage::render(float curr_time, int width, int height)
     glEnable(GL_TEXTURE_2D);
     texture->bind();
 
-    glBegin(GL_TRIANGLE_FAN);
-    glColor4f(1.0f, 1.0f, 1.0f, alpha);
-    glTexCoord2f(0.0f, 1.0f); glVertex2f(left, bottom);
-    glTexCoord2f(1.0f, 1.0f); glVertex2f(left + xSize, bottom);
-    glTexCoord2f(1.0f, 0.0f); glVertex2f(left + xSize, bottom + ySize);
-    glTexCoord2f(0.0f, 0.0f); glVertex2f(left, bottom + ySize);
-    glEnd();
+    Overlay::Rectangle r(left, bottom, xSize, ySize, {Color::White, alpha}, Overlay::RectType::Textured);
+    overlay->rect(r);
 }
 
 
@@ -3354,37 +3342,45 @@ void CelestiaCore::renderOverlay()
 
     if (views.size() > 1)
     {
+        Overlay::Rectangle r(0, 0, 0, 0, frameColor, Overlay::RectType::Outlined, 1);
+
         // Render a thin border arround all views
         if (showViewFrames || resizeSplit)
         {
-            glLineWidth(1.0f);
-            glDisable(GL_TEXTURE_2D);
-            glColor4f(0.5f, 0.5f, 0.5f, 1.0f);
             for(const auto v : views)
+            {
                 if (v->type == View::ViewWindow)
-                    showViewFrame(v, width, height);
+                {
+                    r.x = v->x * width;
+                    r.y = v->y * height;
+                    r.w = v->width * width - 1;
+                    r.h = v->height * height - 1;
+                    overlay->rect(r);
+                }
+            }
         }
-        glLineWidth(1.0f);
 
         // Render a very simple border around the active view
-        View* av = (*activeView);
+        View* av = *activeView;
+
+        r.x = av->x * width;
+        r.y = av->y * height;
+        r.w = av->width * width - 1;
+        r.h = av->height * height - 1;
 
         if (showActiveViewFrame)
         {
-            glLineWidth(2.0f);
-            glDisable(GL_TEXTURE_2D);
-            glColor4f(0.5f, 0.5f, 1.0f, 1.0f);
-            showViewFrame(av, width, height);
-            glLineWidth(1.0f);
+            r.colors[0] = activeFrameColor;
+            r.lw = 2;
+            overlay->rect(r);
         }
 
         if (currentTime < flashFrameStart + 0.5)
         {
-            glLineWidth(8.0f);
-            glColor4f(0.5f, 0.5f, 1.0f,
-                      (float) (1.0 - (currentTime - flashFrameStart) / 0.5));
-            showViewFrame(av, width, height);
-            glLineWidth(1.0f);
+            float alpha = (float) (1.0 - (currentTime - flashFrameStart) / 0.5);
+            r.colors[0] = {activeFrameColor, alpha};
+            r.lw = 8;
+            overlay->rect(r);
         }
     }
 
@@ -3764,8 +3760,8 @@ void CelestiaCore::renderOverlay()
     {
         overlay->setFont(titleFont);
         glPushMatrix();
-        glColor4f(0.7f, 0.7f, 1.0f, 0.2f);
-        overlay->rect(0.0f, 0.0f, (float) width, 100.0f);
+        Overlay::Rectangle r(0, 0, width, 100, consoleColor, Overlay::RectType::Filled);
+        overlay->rect(r);
         glTranslatef(0.0f, fontHeight * 3.0f + 35.0f, 0.0f);
         glColor4f(0.6f, 0.6f, 1.0f, 1.0f);
         overlay->beginText();
@@ -3844,11 +3840,15 @@ void CelestiaCore::renderOverlay()
         int movieWidth = movieCapture->getWidth();
         int movieHeight = movieCapture->getHeight();
         glPushMatrix();
-        glColor4f(1, 0, 0, 1);
-        overlay->rect((float) ((width - movieWidth) / 2 - 1),
-                      (float) ((height - movieHeight) / 2 - 1),
-                      (float) (movieWidth + 1),
-                      (float) (movieHeight + 1), false);
+        Color color(1, 0, 0, 1);
+        glColor(color);
+        Overlay::Rectangle r((width - movieWidth) / 2 - 1,
+                             (height - movieHeight) / 2 - 1,
+                             movieWidth + 1,
+                             movieHeight + 1,
+                             color,
+                             Overlay::RectType::Outlined);
+        overlay->rect(r);
         glTranslatef((float) ((width - movieWidth) / 2),
                      (float) ((height + movieHeight) / 2 + 2), 0.0f);
         overlay->beginText();
@@ -3918,20 +3918,14 @@ void CelestiaCore::renderOverlay()
             }
 
             logoTexture->bind();
-            glBegin(GL_QUADS);
-            glColor4f(0.8f, 0.8f, 1.0f, botAlpha);
-            //glColor4f(1.0f, 1.0f, 1.0f, botAlpha);
-            glTexCoord2f(0.0f, 1.0f);
-            glVertex2i(left, bottom);
-            glTexCoord2f(1.0f, 1.0f);
-            glVertex2i(left + xSize, bottom);
-            glColor4f(0.6f, 0.6f, 1.0f, topAlpha);
-            //glColor4f(1.0f, 1.0f, 1.0f, topAlpha);
-            glTexCoord2f(1.0f, 0.0f);
-            glVertex2i(left + xSize, bottom + ySize);
-            glTexCoord2f(0.0f, 0.0f);
-            glVertex2i(left, bottom + ySize);
-            glEnd();
+            vector<Color> c = {
+                {0.8f, 0.8f, 1.0f, botAlpha},
+                {0.8f, 0.8f, 1.0f, botAlpha},
+                {0.6f, 0.6f, 1.0f, topAlpha},
+                {0.6f, 0.6f, 1.0f, topAlpha}
+            };
+            Overlay::Rectangle r(left, bottom, xSize, ySize, c, Overlay::RectType::Textured);
+            overlay->rect(r);
         }
         else
         {
@@ -3945,43 +3939,41 @@ void CelestiaCore::renderOverlay()
 }
 
 
-class SolarSystemLoader : public EnumFilesHandler
+class SolarSystemLoader
 {
- public:
     Universe* universe;
     ProgressNotifier* notifier;
+
+ public:
     SolarSystemLoader(Universe* u, ProgressNotifier* pn) : universe(u), notifier(pn) {};
 
-    bool process(const string& filename)
+    void process(const fs::path& filepath)
     {
-        if (DetermineFileType(filename) == Content_CelestiaCatalog)
+        if (DetermineFileType(filepath) != Content_CelestiaCatalog)
+            return;
+
+        fmt::fprintf(clog, _("Loading solar system catalog: %s\n"), filepath.string());
+        if (notifier != nullptr)
+            notifier->update(filepath.filename().string());
+
+        ifstream solarSysFile(filepath.string(), ios::in);
+        if (solarSysFile.good())
         {
-            string fullname = getPath() + '/' + filename;
-            fmt::fprintf(clog, _("Loading solar system catalog: %s\n"), fullname);
-            if (notifier != nullptr)
-                notifier->update(filename);
-
-            ifstream solarSysFile(fullname, ios::in);
-            if (solarSysFile.good())
-            {
-                LoadSolarSystemObjects(solarSysFile,
-                                       *universe,
-                                       getPath());
-            }
+            LoadSolarSystemObjects(solarSysFile,
+                                   *universe,
+                                   filepath.parent_path());
         }
-
-        return true;
     };
 };
 
-template <class OBJDB> class CatalogLoader : public EnumFilesHandler
+template <class OBJDB> class CatalogLoader
 {
-public:
     OBJDB*      objDB;
     string      typeDesc;
     ContentType contentType;
     ProgressNotifier* notifier;
 
+ public:
     CatalogLoader(OBJDB* db,
                   const std::string& typeDesc,
                   const ContentType& contentType,
@@ -3993,27 +3985,21 @@ public:
     {
     }
 
-    bool process(const string& filename)
+    void process(const fs::path& filepath)
     {
-        if (DetermineFileType(filename) == contentType)
-        {
-            string fullname = getPath() + '/' + filename;
-            fmt::fprintf(clog, _("Loading %s catalog: %s\n"), typeDesc, fullname);
-            if (notifier)
-                notifier->update(filename);
+        if (DetermineFileType(filepath) != contentType)
+            return;
 
-            ifstream catalogFile(fullname, ios::in);
-            if (catalogFile.good())
-            {
-                bool success = objDB->load(catalogFile, getPath());
-                if (!success)
-                {
-                    //DPRINTF(0, _("Error reading star file: %s\n"), fullname.c_str());
-                    DPRINTF(0, "Error reading %s catalog file: %s\n", typeDesc.c_str(), fullname.c_str());
-                }
-            }
+        fmt::fprintf(clog, _("Loading %s catalog: %s\n"), typeDesc, filepath.string());
+        if (notifier != nullptr)
+            notifier->update(filepath.filename().string());
+
+        ifstream catalogFile(filepath.string(), ios::in);
+        if (catalogFile.good())
+        {
+            if (!objDB->load(catalogFile, filepath.parent_path()))
+                DPRINTF(0, "Error reading %s catalog file: %s\n", typeDesc.c_str(), filepath.string());
         }
-        return true;
     }
 };
 
@@ -4021,8 +4007,8 @@ using StarLoader = CatalogLoader<StarDatabase>;
 using DeepSkyLoader = CatalogLoader<DSODatabase>;
 
 
-bool CelestiaCore::initSimulation(const string& configFileName,
-                                  const vector<string>& extrasDirs,
+bool CelestiaCore::initSimulation(const fs::path& configFileName,
+                                  const vector<fs::path>& extrasDirs,
                                   ProgressNotifier* progressNotifier)
 {
     if (!configFileName.empty())
@@ -4033,8 +4019,8 @@ bool CelestiaCore::initSimulation(const string& configFileName,
     {
         config = ReadCelestiaConfig("celestia.cfg");
 
-        string localConfigFile = WordExp("~/.celestia.cfg");
-        if (localConfigFile != "")
+        fs::path localConfigFile = PathExp("~/.celestia.cfg");
+        if (!localConfigFile.empty())
             ReadCelestiaConfig(localConfigFile, config);
     }
 
@@ -4059,20 +4045,17 @@ bool CelestiaCore::initSimulation(const string& configFileName,
     // Insert additional extras directories into the configuration. These
     // additional directories typically come from the command line. It may
     // be useful to permit other command line overrides of config file fields.
-    if (!extrasDirs.empty())
+    // Only insert the additional extras directories that aren't also
+    // listed in the configuration file. The additional directories are added
+    // after the ones from the config file and the order in which they were
+    // specified is preserved. This process in O(N*M), but the number of
+    // additional extras directories should be small.
+    for (const auto& dir : extrasDirs)
     {
-        // Only insert the additional extras directories that aren't also
-        // listed in the configuration file. The additional directories are added
-        // after the ones from the config file and the order in which they were
-        // specified is preserved. This process in O(N*M), but the number of
-        // additional extras directories should be small.
-        for (const auto& dir : extrasDirs)
+        if (find(config->extrasDirs.begin(), config->extrasDirs.end(), dir.string()) ==
+            config->extrasDirs.end())
         {
-            if (find(config->extrasDirs.begin(), config->extrasDirs.end(), dir) ==
-                config->extrasDirs.end())
-            {
-                config->extrasDirs.push_back(dir);
-            }
+            config->extrasDirs.push_back(dir.string());
         }
     }
 
@@ -4113,9 +4096,9 @@ bool CelestiaCore::initSimulation(const string& configFileName,
     for (const auto& file : config->dsoCatalogFiles)
     {
         if (progressNotifier)
-            progressNotifier->update(file);
+            progressNotifier->update(file.string());
 
-        ifstream dsoFile(file, ios::in);
+        ifstream dsoFile(file.string(), ios::in);
         if (!dsoFile.good())
         {
             warning(fmt::sprintf(_("Error opening deepsky catalog file %s.\n"), file));
@@ -4127,23 +4110,17 @@ bool CelestiaCore::initSimulation(const string& configFileName,
     }
 
     // Next, read all the deep sky files in the extras directories
+    for (const auto& dir : config->extrasDirs)
     {
-        for (const auto& _dir : config->extrasDirs)
-        {
-            if (_dir != "")
-            {
-                Directory* dir = OpenDirectory(_dir);
+        if (dir.empty())
+            continue;
 
-                DeepSkyLoader loader(dsoDB,
-                                     "deep sky object",
-                                     Content_CelestiaDeepSkyCatalog,
-                                     progressNotifier);
-                loader.pushDir(_dir);
-                dir->enumFiles(loader, true);
-
-                delete dir;
-            }
-        }
+        DeepSkyLoader loader(dsoDB,
+                             "deep sky object",
+                             Content_CelestiaDeepSkyCatalog,
+                             progressNotifier);
+        for (const auto& fn : fs::recursive_directory_iterator(dir))
+            loader.process(fn);
     }
     dsoDB->finish();
     universe->setDSOCatalog(dsoDB);
@@ -4158,41 +4135,37 @@ bool CelestiaCore::initSimulation(const string& configFileName,
         for (const auto& file : config->solarSystemFiles)
         {
             if (progressNotifier)
-                progressNotifier->update(file);
+                progressNotifier->update(file.string());
 
-            ifstream solarSysFile(file, ios::in);
+            ifstream solarSysFile(file.string(), ios::in);
             if (!solarSysFile.good())
             {
                 warning(fmt::sprintf(_("Error opening solar system catalog %s.\n"), file));
             }
             else
             {
-                LoadSolarSystemObjects(solarSysFile, *universe, "");
+                LoadSolarSystemObjects(solarSysFile, *universe);
             }
         }
     }
 
     // Next, read all the solar system files in the extras directories
     {
-        for (const auto& _dir : config->extrasDirs)
+        for (const auto& dir : config->extrasDirs)
         {
-            if (_dir != "")
-            {
-                Directory* dir = OpenDirectory(_dir);
+            if (dir.empty())
+                continue;
 
-                SolarSystemLoader loader(universe, progressNotifier);
-                loader.pushDir(_dir);
-                dir->enumFiles(loader, true);
-
-                delete dir;
-            }
+            SolarSystemLoader loader(universe, progressNotifier);
+            for (const auto& fn : fs::recursive_directory_iterator(dir))
+                loader.process(fn);
         }
     }
 
     // Load asterisms:
-    if (config->asterismsFile != "")
+    if (!config->asterismsFile.empty())
     {
-        ifstream asterismsFile(config->asterismsFile, ios::in);
+        ifstream asterismsFile(config->asterismsFile.string(), ios::in);
         if (!asterismsFile.good())
         {
             warning(fmt::sprintf(_("Error opening asterisms file %s.\n"),
@@ -4206,9 +4179,9 @@ bool CelestiaCore::initSimulation(const string& configFileName,
         }
     }
 
-    if (config->boundariesFile != "")
+    if (!config->boundariesFile.empty())
     {
-        ifstream boundariesFile(config->boundariesFile, ios::in);
+        ifstream boundariesFile(config->boundariesFile.string(), ios::in);
         if (!boundariesFile.good())
         {
             warning(fmt::sprintf(_("Error opening constellation boundaries file %s.\n"),
@@ -4222,10 +4195,10 @@ bool CelestiaCore::initSimulation(const string& configFileName,
     }
 
     // Load destinations list
-    if (config->destinationsFile != "")
+    if (!config->destinationsFile.empty())
     {
-        string localeDestinationsFile = LocaleFilename(config->destinationsFile);
-        ifstream destfile(localeDestinationsFile);
+        fs::path localeDestinationsFile = LocaleFilename(config->destinationsFile);
+        ifstream destfile(localeDestinationsFile.string());
         if (destfile.good())
         {
             destinations = ReadDestinationList(destfile);
@@ -4318,7 +4291,7 @@ bool CelestiaCore::initRenderer()
         titleFont = font;
 
     // Set up the overlay
-    overlay = new Overlay();
+    overlay = new Overlay(*renderer);
     overlay->setWindowSize(width, height);
 
     if (config->labelFont == "")
@@ -4343,7 +4316,7 @@ bool CelestiaCore::initRenderer()
 
     if (config->logoTextureFile != "")
     {
-        logoTexture = LoadTextureFromFile(string("textures") + "/" + config->logoTextureFile);
+        logoTexture = LoadTextureFromFile(fs::path("textures") / config->logoTextureFile);
     }
 
     return true;
@@ -4352,11 +4325,11 @@ bool CelestiaCore::initRenderer()
 
 static void loadCrossIndex(StarDatabase* starDB,
                            StarDatabase::Catalog catalog,
-                           const string& filename)
+                           const fs::path& filename)
 {
     if (!filename.empty())
     {
-        ifstream xrefFile(filename, ios::in | ios::binary);
+        ifstream xrefFile(filename.string(), ios::in | ios::binary);
         if (xrefFile.good())
         {
             if (!starDB->loadCrossIndex(catalog, xrefFile))
@@ -4373,7 +4346,7 @@ bool CelestiaCore::readStars(const CelestiaConfig& cfg,
 {
     StarDetails::SetStarTextures(cfg.starTextures);
 
-    ifstream starNamesFile(cfg.starNamesFile, ios::in);
+    ifstream starNamesFile(cfg.starNamesFile.string(), ios::in);
     if (!starNamesFile.good())
     {
         fmt::fprintf(cerr, _("Error opening %s\n"), cfg.starNamesFile);
@@ -4393,9 +4366,9 @@ bool CelestiaCore::readStars(const CelestiaConfig& cfg,
     if (!cfg.starDatabaseFile.empty())
     {
         if (progressNotifier)
-            progressNotifier->update(cfg.starDatabaseFile);
+            progressNotifier->update(cfg.starDatabaseFile.string());
 
-        ifstream starFile(cfg.starDatabaseFile, ios::in | ios::binary);
+        ifstream starFile(cfg.starDatabaseFile.string(), ios::in | ios::binary);
         if (!starFile.good())
         {
             fmt::fprintf(cerr, _("Error opening %s\n"), cfg.starDatabaseFile);
@@ -4421,38 +4394,27 @@ bool CelestiaCore::readStars(const CelestiaConfig& cfg,
 
     // Next, read any ASCII star catalog files specified in the StarCatalogs
     // list.
-    if (!cfg.starCatalogFiles.empty())
+    for (const auto& file : config->starCatalogFiles)
     {
-        for (const auto& file : config->starCatalogFiles)
-        {
-            if (file != "")
-            {
-                ifstream starFile(file, ios::in);
-                if (starFile.good())
-                {
-                    starDB->load(starFile, "");
-                }
-                else
-                {
-                    fmt::fprintf(cerr, _("Error opening star catalog %s\n"), file);
-                }
-            }
-        }
+        if (file.empty())
+            continue;
+
+        ifstream starFile(file.string(), ios::in);
+        if (starFile.good())
+            starDB->load(starFile);
+        else
+            fmt::fprintf(cerr, _("Error opening star catalog %s\n"), file);
     }
 
     // Now, read supplemental star files from the extras directories
-    for (const auto& _dir : config->extrasDirs)
+    for (const auto& dir : config->extrasDirs)
     {
-        if (_dir != "")
-        {
-            Directory* dir = OpenDirectory(_dir);
+        if (dir.empty())
+            continue;
 
-            StarLoader loader(starDB, "star", Content_CelestiaStarCatalog, progressNotifier);
-            loader.pushDir(_dir);
-            dir->enumFiles(loader, true);
-
-            delete dir;
-        }
+        StarLoader loader(starDB, "star", Content_CelestiaStarCatalog, progressNotifier);
+        for (const auto& fn : fs::recursive_directory_iterator(dir))
+            loader.process(fn);
     }
 
     starDB->finish();
@@ -4643,7 +4605,8 @@ void CelestiaCore::initMovieCapture(MovieCapture* mc)
 
 void CelestiaCore::recordBegin()
 {
-    if (movieCapture != nullptr) {
+    if (movieCapture != nullptr)
+    {
         recording = true;
         movieCapture->recordingStatus(true);
     }
@@ -4887,34 +4850,27 @@ bool CelestiaCore::referenceMarkEnabled(const string& refMark, Selection sel) co
 
 
 #ifdef CELX
-class LuaPathFinder : public EnumFilesHandler
+class LuaPathFinder
 {
- public:
-    string luaPath;
-    LuaPathFinder(string s) : luaPath(s) {};
-    string lastPath;
+    set<fs::path> dirs;
 
-    bool process(const string& filename)
+ public:
+    const string getLuaPath() const
     {
-        if (getPath() != lastPath)
+        string out;
+        for (const auto& dir : dirs)
+            out += (dir / "?.lua;").string();
+        return out;
+    }
+
+    void process(const fs::path& p)
+    {
+        auto dir = p.parent_path();
+        if (p.extension() == ".lua")
         {
-            int extPos = filename.rfind('.');
-            if (extPos != (int)string::npos)
-            {
-                string ext = string(filename, extPos, filename.length() - extPos + 1);
-                if (ext == ".lua")
-                {
-                    lastPath = getPath();
-                    string newPatt = getPath()+"/?.lua;";
-                    extPos = luaPath.rfind(newPatt);
-                    if (extPos < 0)
-                    {
-                        luaPath = luaPath + newPatt;
-                    }
-                }
-            }
+            if (dirs.count(dir) == 0)
+                dirs.insert(dir);
         }
-        return true;
     };
 };
 
@@ -4934,20 +4890,15 @@ bool CelestiaCore::initLuaHook(ProgressNotifier* progressNotifier)
     string LuaPath = "?.lua;celxx/?.lua;";
 
     // Find the path for lua files in the extras directories
+    for (const auto& dir : config->extrasDirs)
     {
-        for (const auto& _dir : config->extrasDirs)
-        {
-            if (_dir != "")
-            {
-                Directory* dir = OpenDirectory(_dir);
+        if (dir.empty())
+            continue;
 
-                LuaPathFinder loader("");
-                loader.pushDir(_dir);
-                dir->enumFiles(loader, true);
-                LuaPath += loader.luaPath;
-                delete dir;
-            }
-        }
+        LuaPathFinder loader;
+        for (const auto& fn : fs::recursive_directory_iterator(dir))
+            loader.process(fn);
+        LuaPath += loader.getLuaPath();
     }
 
     // Always grant access for the Lua hook
@@ -4958,21 +4909,20 @@ bool CelestiaCore::initLuaHook(ProgressNotifier* progressNotifier)
     int status = 0;
 
     // Execute the Lua hook initialization script
-    if (config->luaHook != "")
+    if (!config->luaHook.empty())
     {
-        string filename = config->luaHook;
-        ifstream scriptfile(filename);
+        ifstream scriptfile(config->luaHook.string());
         if (!scriptfile.good())
         {
             string errMsg;
-            errMsg = fmt::sprintf(_("Error opening LuaHook '%s'"),  filename);
+            errMsg = fmt::sprintf(_("Error opening LuaHook '%s'"), config->luaHook);
             fatalError(errMsg);
         }
 
         if (progressNotifier)
-            progressNotifier->update(config->luaHook);
+            progressNotifier->update(config->luaHook.string());
 
-        status = luaHook->loadScript(scriptfile, filename);
+        status = luaHook->loadScript(scriptfile, config->luaHook);
     }
     else
     {

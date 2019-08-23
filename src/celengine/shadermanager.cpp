@@ -8,7 +8,8 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
-#include "celutil/util.h"
+#include <celutil/util.h>
+#include <celcompat/filesystem.h>
 #include "shadermanager.h"
 #include <GL/glew.h>
 #include <cmath>
@@ -19,7 +20,6 @@
 #include <fmt/printf.h>
 #include <cassert>
 #include <Eigen/Geometry>
-#include <sys/stat.h>
 
 using namespace Eigen;
 using namespace std;
@@ -53,16 +53,6 @@ static const char* errorFragmentShaderSource =
 
 
 static const char* CommonHeader = "#version 120\n";
-
-
-ShaderProperties::ShaderProperties() :
-    nLights(0),
-    texUsage(0),
-    lightModel(DiffuseModel),
-    shadowCounts(0),
-    effects(0)
-{
-}
 
 
 bool
@@ -338,12 +328,6 @@ ShaderManager::getShader(const string& name, const string& vs, const string& fs)
     return prog;
 }
 
-#ifndef _WIN32
-constexpr const char fsDelimeter = '/';
-#else
-constexpr const char fsDelimeter = '\\';
-#endif
-
 CelestiaGLProgram*
 ShaderManager::getShader(const string& name)
 {
@@ -354,32 +338,27 @@ ShaderManager::getShader(const string& name)
         return iter->second;
     }
 
-    auto vsName = fmt::sprintf("shaders%c%s_vert.glsl", fsDelimeter, name);
-    auto fsName = fmt::sprintf("shaders%c%s_frag.glsl", fsDelimeter, name);
+    fs::path dir("shaders");
+    auto vsName = dir / fmt::sprintf("%s_vert.glsl", name);
+    auto fsName = dir / fmt::sprintf("%s_frag.glsl", name);
 
-    struct stat s;
-    if (stat(vsName.c_str(), &s) == -1)
+    std::error_code ecv, ecf;
+    uintmax_t vsSize = fs::file_size(vsName, ecv);
+    uintmax_t fsSize = fs::file_size(fsName, ecf);
+    if (ecv || ecf)
     {
-        fmt::fprintf(cerr, "Failed to stat %s\n", vsName);
+        fmt::fprintf(cerr, "Failed to get file size of %s or %s\n", vsName, fsName);
         return getShader(name, errorVertexShaderSource, errorFragmentShaderSource);
     }
-    auto vsSize = s.st_size;
 
-    if (stat(fsName.c_str(), &s) == -1)
-    {
-        fmt::fprintf(cerr, "Failed to stat %s\n", fsName);
-        return getShader(name, errorVertexShaderSource, errorFragmentShaderSource);
-    }
-    auto fsSize = s.st_size;
-
-    ifstream vsf(vsName);
+    ifstream vsf(vsName.string());
     if (!vsf.good())
     {
         fmt::fprintf(cerr, "Failed to open %s\n", vsName);
         return getShader(name, errorVertexShaderSource, errorFragmentShaderSource);
     }
 
-    ifstream fsf(fsName);
+    ifstream fsf(fsName.string());
     if (!fsf.good())
     {
         fmt::fprintf(cerr, "Failed to open %s\n", fsName);
@@ -2996,37 +2975,26 @@ ShaderManager::buildParticleFragmentShader(const ShaderProperties& props)
 }
 
 GLVertexShader*
-ShaderManager::buildStaticVertexShader(const ShaderProperties& props)
+ShaderManager::buildSimpleVertexShader(uint32_t props)
 {
     ostringstream source;
 
-    source << CommonHeader << "// static shader\n";
+    source << CommonHeader;
 
-    if (props.texUsage & ShaderProperties::NormalTexture)
-    {
-        source << "uniform sampler2D normTex;\n";
-    }
-
-    if (props.texUsage & ShaderProperties::PointSprite)
-    {
-        source << DeclareUniform("pointScale", Shader_Float);
-        source << DeclareAttribute("pointSize", Shader_Float);
-    }
-
-    if (props.staticProps & ShaderProperties::UniformColor)
-        source << DeclareUniform("color", Shader_Vector4);
-    else
+    if (props & ShaderProperties::PerVertexColor)
         source << DeclareVarying("color", Shader_Vector4);
+
+    if (props & ShaderProperties::HasTexture)
+        source << DeclareVarying("texCoord", Shader_Vector2);
 
     // Begin main()
     source << "\nvoid main(void)\n";
     source << "{\n";
-    // Optional point size
-    if (props.texUsage & ShaderProperties::PointSprite)
-        source << "    gl_PointSize = pointSize;\n";
 
-    if (!(props.staticProps & ShaderProperties::UniformColor))
+    if (props & ShaderProperties::PerVertexColor)
         source << "    color = gl_Color;\n";
+    if (props & ShaderProperties::HasTexture)
+        source << "    texCoord = gl_MultiTexCoord0.st;\n";
     source << "    gl_Position = ftransform();\n";
 
     source << "}\n";
@@ -3041,34 +3009,32 @@ ShaderManager::buildStaticVertexShader(const ShaderProperties& props)
 
 
 GLFragmentShader*
-ShaderManager::buildStaticFragmentShader(const ShaderProperties& props)
+ShaderManager::buildSimpleFragmentShader(uint32_t props)
 {
     ostringstream source;
 
     source << CommonHeader;
 
-    if (props.texUsage & ShaderProperties::NormalTexture)
+    if (props & ShaderProperties::UniformColor)
+        source << DeclareUniform("color", Shader_Vector4);
+
+    if (props & ShaderProperties::HasTexture)
     {
-        source << "uniform sampler2D normTex;\n";
+        source << DeclareUniform("tex", Shader_Sampler2D);
+        source << DeclareVarying("texCoord", Shader_Vector2);
     }
 
-    if (props.staticProps & ShaderProperties::UniformColor)
-        source << DeclareUniform("color", Shader_Vector4);
-    else
+    if (props & ShaderProperties::PerVertexColor)
         source << DeclareVarying("color", Shader_Vector4);
 
     // Begin main()
     source << "\nvoid main(void)\n";
     source << "{\n";
 
-    if (props.texUsage & ShaderProperties::NormalTexture)
-    {
-        source << "    gl_FragColor = texture2D(normTex, gl_PointCoord) * color;\n";
-    }
+    if (props & ShaderProperties::HasTexture)
+        source << "    gl_FragColor = texture2D(tex, texCoord) * color;\n";
     else
-    {
         source << "    gl_FragColor = color;\n";
-    }
 
     source << "}\n";
     // End of main()
@@ -3091,10 +3057,10 @@ ShaderManager::buildProgram(const ShaderProperties& props)
     GLVertexShader* vs = nullptr;
     GLFragmentShader* fs = nullptr;
 
-    if (props.staticShader)
+    if (props.simpleProps != 0)
     {
-        vs = buildStaticVertexShader(props);
-        fs = buildStaticFragmentShader(props);
+        vs = buildSimpleVertexShader(props.simpleProps);
+        fs = buildSimpleFragmentShader(props.simpleProps);
     }
     else if (props.lightModel == ShaderProperties::RingIllumModel)
     {
@@ -3384,10 +3350,9 @@ CelestiaGLProgram::initParameters()
         pointScale           = floatParam("pointScale");
     }
 
-    if (props.staticShader)
+    if (props.simpleProps & ShaderProperties::UniformColor)
     {
-        if (props.staticProps & ShaderProperties::UniformColor)
-            color            = vec4Param("color");
+        color                = vec4Param("color");
     }
 }
 

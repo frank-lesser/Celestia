@@ -10,9 +10,7 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
-#ifdef TARGET_OS_MAC
-#include <Carbon/Carbon.h>
-#endif
+
 #include <ctime>
 
 #include <QIcon>
@@ -64,7 +62,7 @@
 #if defined(_WIN32)
 #include "celestia/avicapture.h"
 // TODO: Add Mac support
-#elif !defined(TARGET_OS_MAC)
+#elif !defined(__APPLE__)
 #ifdef THEORA
 #include "celestia/oggtheoracapture.h"
 #endif
@@ -203,7 +201,13 @@ void CelestiaAppWindow::init(const QString& qConfigFileName,
     QString celestia_data_dir = QString::fromLocal8Bit(::getenv("CELESTIA_DATA_DIR"));
 
     if (celestia_data_dir.isEmpty()) {
-        QString celestia_data_dir = CONFIG_DATA_DIR;
+#ifdef NATIVE_OSX_APP
+        // On macOS data directory is in a fixed position relative to the application bundle
+        QString dataDir = QApplication::applicationDirPath() + "/../Resources";
+#else
+        QString dataDir = CONFIG_DATA_DIR;
+#endif
+        QString celestia_data_dir = dataDir;
         QDir::setCurrent(celestia_data_dir);
     } else if (QDir(celestia_data_dir).isReadable()) {
         QDir::setCurrent(celestia_data_dir);
@@ -220,37 +224,9 @@ void CelestiaAppWindow::init(const QString& qConfigFileName,
         configFileName = qConfigFileName.toStdString();
 
     // Translate extras directories from QString -> std::string
-    vector<string> extrasDirectories;
+    vector<fs::path> extrasDirectories;
     for (const auto& dir : qExtrasDirectories)
         extrasDirectories.push_back(dir.toUtf8().data());
-
-#if defined(TARGET_OS_MAC) && defined(NATIVE_OSX_APP)
-    static short domains[] = { kUserDomain, kLocalDomain, kNetworkDomain };
-    int domain = 0;
-    int domainCount = (sizeof domains / sizeof(short));
-    QString resourceDir = QDir::currentPath();
-    while (!QDir::setCurrent(resourceDir+"/CelestiaResources") && domain < domainCount)
-    {
-        FSRef folder;
-        CFURLRef url;
-        UInt8 fullPath[PATH_MAX];
-        if (noErr == FSFindFolder(domains[domain++], kApplicationSupportFolderType, FALSE, &folder))
-        {
-            url = CFURLCreateFromFSRef(nil, &folder);
-            if (CFURLGetFileSystemRepresentation(url, TRUE, fullPath, PATH_MAX))
-                resourceDir = (const char *)fullPath;
-            CFRelease(url);
-        }
-    }
-
-    if (domain >= domainCount)
-    {
-        QMessageBox::critical(0, "Celestia",
-                              _("Celestia is unable to run because the CelestiaResources folder was not "
-                                 "found, probably due to improper installation."));
-        exit(1);
-    }
-#endif
 
     initAppDataDirectory();
 
@@ -437,61 +413,28 @@ void CelestiaAppWindow::init(const QString& qConfigFileName,
  *  (such as bookmarks) which aren't stored in settings. The location
  *  of the data directory depends on the platform:
  *
- *  Win32: %APPDATA%\Celestia
- *  Mac OS X: $HOME/Library/Application Support/Celestia
- *  Unix and Mac OS X: $HOME/.config/Celestia
+ *  Win32: %LOCALAPPDATA%\Celestia
+ *  Mac OS X: ~/Library/Application Support/Celestia
+ *  Unix: $XDG_DATA_HOME/Celestia
+ *
+ *  We don't use AppDataLocation because it returns Qt-specific location,
+ *  e.g. "$XDG_DATA_HOME/Celestia Development Team/Celestia QT" while we
+ *  should keep it compatible between all frontends.
  */
+
 void CelestiaAppWindow::initAppDataDirectory()
 {
-#if defined(_WIN32)
-    // On Windows, the Celestia data directory is %APPDATA%\Celestia
-    // First, get the value of the APPDATA environment variable
-    QStringList envVars = QProcess::systemEnvironment();
-    QString appDataPath;
-    foreach (QString envVariable, envVars)
+    auto dir = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
+    m_dataDirPath = dir.filePath("Celestia");
+    if (!QDir(m_dataDirPath).exists())
     {
-        if (envVariable.startsWith("APPDATA"))
+        if (!dir.mkpath(m_dataDirPath))
         {
-            QStringList nameValue = envVariable.split("=");
-            if (nameValue.size() == 2)
-                appDataPath = nameValue[1];
-            break;
+            // If the doesn't exist even after we tried to create it,
+            // give up on trying to load user data from there.
+            m_dataDirPath = "";
         }
     }
-#elif defined(TARGET_OS_MAC)
-    QString appDataPath = QDir::home().filePath("Library/Application Support");
-#else
-    // UNIX
-    QString appDataPath = QDir::home().filePath(".config");
-#endif
-
-    if (appDataPath != "")
-    {
-        // Create a Celestia subdirectory of APPDATA if it doesn't already exist
-        QDir appDataDir(appDataPath);
-        if (appDataDir.exists())
-        {
-            m_dataDirPath = appDataDir.filePath("Celestia");
-            QDir celestiaDataDir(m_dataDirPath);
-            if (!celestiaDataDir.exists())
-            {
-                appDataDir.mkdir("Celestia");
-            }
-
-            // If the doesn't exist even after we tried to create it, give up
-            // on trying to load user data from there.
-            if (!celestiaDataDir.exists())
-            {
-                m_dataDirPath = "";
-            }
-        }
-    }
-#ifdef _DEBUG
-    else
-    {
-        QMessageBox::warning(this, "APPDIR missing", "APPDIR environment variable not found!");
-    }
-#endif
 }
 
 
@@ -693,7 +636,7 @@ void CelestiaAppWindow::slotGrabImage()
 void CelestiaAppWindow::slotCaptureVideo()
 {
 // TODO: Add Mac support
-#if defined(_WIN32) || (defined(THEORA) && !defined(TARGET_OS_MAC))
+#if defined(_WIN32) || (defined(THEORA) && !defined(__APPLE__))
     QString dir;
     QSettings settings;
     settings.beginGroup("Preferences");
@@ -1172,7 +1115,7 @@ void CelestiaAppWindow::createMenus()
     QAction* captureVideoAction = new QAction(QIcon(":/icons/capture-video.png"),
                                               _("Capture &video"), this);
     // TODO: Add Mac support for video capture
-#if defined(TARGET_OS_MAC) || (!defined(_WIN32) && !defined(THEORA))
+#if defined(__APPLE__) || (!defined(_WIN32) && !defined(THEORA))
     captureVideoAction->setEnabled(false);
 #endif
     captureVideoAction->setShortcut(QString(_("Shift+F10")));
@@ -1578,7 +1521,7 @@ QMenu* CelestiaAppWindow::buildScriptsMenu()
     for (const auto& script : *scripts)
     {
         QAction* act = new QAction(script.title.c_str(), this);
-        act->setData(script.filename.c_str());
+        act->setData(script.filename.string().c_str());
         connect(act, SIGNAL(triggered()), this, SLOT(slotOpenScript()));
         menu->addAction(act);
     }

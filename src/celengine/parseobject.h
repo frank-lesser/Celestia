@@ -14,14 +14,15 @@
 #define _CELENGINE_PARSEOBJECT_H_
 
 #include <string>
+#include <memory>
 #include <celephem/orbit.h>
 #include <celephem/rotation.h>
+#include <celcompat/filesystem.h>
+#include "frame.h"
 #include "parser.h"
 
 class Body;
 class Star;
-class ReferenceFrame;
-class TwoVectorFrame;
 class Universe;
 class Selection;
 
@@ -37,21 +38,21 @@ bool ParseDate(Hash* hash, const string& name, double& jd);
 
 Orbit* CreateOrbit(const Selection& centralObject,
                    Hash* planetData,
-                   const std::string& path,
+                   const fs::path& path,
                    bool usePlanetUnits);
 
 RotationModel* CreateRotationModel(Hash* rotationData,
-                                   const string& path,
+                                   const fs::path& path,
                                    double syncRotationPeriod);
 
 RotationModel* CreateDefaultRotationModel(double syncRotationPeriod);
 
-ReferenceFrame* CreateReferenceFrame(const Universe& universe,
+ReferenceFrame::SharedConstPtr CreateReferenceFrame(const Universe& universe,
                                      Value* frameValue,
                                      const Selection& defaultCenter,
                                      Body* defaultObserver);
 
-TwoVectorFrame* CreateTopocentricFrame(const Selection& center,
+std::shared_ptr<const TwoVectorFrame> CreateTopocentricFrame(const Selection& center,
                                        const Selection& target,
                                        const Selection& observer);
 

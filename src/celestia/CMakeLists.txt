@@ -3,12 +3,20 @@ set(CELESTIA_SOURCES
   celestiacore.h
   configfile.cpp
   configfile.h
+  cmdparser.cpp
+  cmdparser.h
+  command.cpp
+  command.h
   destination.cpp
   destination.h
   eclipsefinder.cpp
   eclipsefinder.h
+  execution.cpp
+  execution.h
   favorites.cpp
   favorites.h
+  helper.cpp
+  helper.h
   imagecapture.cpp
   imagecapture.h
   moviecapture.h
@@ -63,6 +71,7 @@ elseif(_UNIX AND ENABLE_THEORA)
 endif()
 
 add_library(celestia STATIC ${CELESTIA_SOURCES})
+
 #[[
 add_library(celestia SHARED ${CELESTIA_SOURCES})
 set_target_properties(celestia PROPERTIES
@@ -70,9 +79,12 @@ set_target_properties(celestia PROPERTIES
   SOVERSION ${VERSION}
 )
 ]]#
-add_dependencies(celestia celengine celephem)
+
+add_dependencies(celestia celengine celmath celtxf celutil)
+target_link_libraries(celestia celengine celmath celtxf celutil)
+
 cotire(celestia)
-target_link_libraries(celestia celengine celephem)
+
 #install(TARGETS celestia LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
 # celestia-glut binary

@@ -16,9 +16,9 @@
 #include <map>
 #include <celengine/astro.h>
 #include <celengine/asterism.h>
-#include <celengine/cmdparser.h>
+#include "cmdparser.h"
 #include <celengine/execenv.h>
-#include <celengine/execution.h>
+#include "execution.h"
 #include <celengine/timeline.h>
 #include <celengine/timelinephase.h>
 #include <fmt/printf.h>
@@ -103,7 +103,7 @@ const char* MouseDownHandler  = "mousedown";
 const char* MouseUpHandler    = "mouseup";
 
 
-#if LUA_VER < 0x050300
+#if LUA_VERSION_NUM < 503
 int lua_isinteger(lua_State *L, int index)
 {
     if (lua_type(L, index) == LUA_TNUMBER)
@@ -322,7 +322,7 @@ static void openLuaLibrary(lua_State* l,
                            const char* name,
                            lua_CFunction func)
 {
-#if LUA_VER >= 0x050200
+#if LUA_VERSION_NUM >= 502
     luaL_requiref(l, name, func, 1);
 #else
     lua_pushcfunction(l, func);
@@ -607,7 +607,7 @@ static int resumeLuaThread(lua_State *L, lua_State *co, int narg)
     //if (!lua_checkstack(co, narg))
     //   luaL_error(L, "too many arguments to resume");
     lua_xmove(L, co, narg);
-#if LUA_VER >= 0x050200
+#if LUA_VERSION_NUM >= 502
     status = lua_resume(co, nullptr, narg);
 #else
     status = lua_resume(co, narg);
@@ -883,7 +883,7 @@ bool LuaState::handleTickEvent(double dt)
 }
 
 
-int LuaState::loadScript(istream& in, const string& streamname)
+int LuaState::loadScript(istream& in, const fs::path& streamname)
 {
     char buf[4096];
     ReadChunkInfo info;
@@ -894,15 +894,16 @@ int LuaState::loadScript(istream& in, const string& streamname)
     if (streamname != "string")
     {
         lua_pushstring(state, "celestia-scriptpath");
-        lua_pushstring(state, streamname.c_str());
+        lua_pushstring(state, streamname.string().c_str());
         lua_settable(state, LUA_REGISTRYINDEX);
     }
 
-#if LUA_VER >= 0x050200
-    int status = lua_load(state, readStreamChunk, &info, streamname.c_str(),
-                          nullptr);
+#if LUA_VERSION_NUM >= 502
+    int status = lua_load(state, readStreamChunk, &info,
+                          streamname.string().c_str(), nullptr);
 #else
-    int status = lua_load(state, readStreamChunk, &info, streamname.c_str());
+    int status = lua_load(state, readStreamChunk, &info,
+                          streamname.string().c_str());
 #endif
     if (status != 0)
         cout << "Error loading script: " << lua_tostring(state, -1) << '\n';
@@ -910,9 +911,9 @@ int LuaState::loadScript(istream& in, const string& streamname)
     return status;
 }
 
-int LuaState::loadScript(const string& s)
+int LuaState::loadScript(const fs::path& s)
 {
-    istringstream in(s);
+    istringstream in(s.string());
     return loadScript(in, "string");
 }
 
@@ -1296,7 +1297,7 @@ bool LuaState::init(CelestiaCore* appCore)
     openLuaLibrary(state, LUA_MATHLIBNAME, luaopen_math);
     openLuaLibrary(state, LUA_TABLIBNAME, luaopen_table);
     openLuaLibrary(state, LUA_STRLIBNAME, luaopen_string);
-#if LUA_VER >= 0x050200
+#if LUA_VERSION_NUM >= 502
     openLuaLibrary(state, LUA_COLIBNAME, luaopen_coroutine);
 #endif
     // Make the package library, except the loadlib function, available
@@ -1851,7 +1852,7 @@ void CelxLua::newFrame(const ObserverFrame& f)
     frame_new(m_lua, f);
 }
 
-void CelxLua::newPhase(const TimelinePhase& phase)
+void CelxLua::newPhase(const shared_ptr<const TimelinePhase>& phase)
 {
     phase_new(m_lua, phase);
 }

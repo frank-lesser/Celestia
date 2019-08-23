@@ -181,7 +181,7 @@ static Location* CreateLocation(Hash* locationData,
 
 static void FillinSurface(Hash* surfaceData,
                           Surface* surface,
-                          const std::string& path)
+                          const fs::path& path)
 {
     surfaceData->getColor("Color", surface->color);
     surfaceData->getColor("SpecularColor", surface->specularColor);
@@ -274,15 +274,15 @@ static Selection GetParentObject(PlanetarySystem* system)
 }
 
 
-TimelinePhase* CreateTimelinePhase(Body* body,
-                                   Universe& universe,
-                                   Hash* phaseData,
-                                   const string& path,
-                                   ReferenceFrame* defaultOrbitFrame,
-                                   ReferenceFrame* defaultBodyFrame,
-                                   bool isFirstPhase,
-                                   bool isLastPhase,
-                                   double previousPhaseEnd)
+TimelinePhase::SharedConstPtr CreateTimelinePhase(Body* body,
+                                                  Universe& universe,
+                                                  Hash* phaseData,
+                                                  const fs::path& path,
+                                                  const ReferenceFrame::SharedConstPtr& defaultOrbitFrame,
+                                                  const ReferenceFrame::SharedConstPtr& defaultBodyFrame,
+                                                  bool isFirstPhase,
+                                                  bool isLastPhase,
+                                                  double previousPhaseEnd)
 {
     double beginning = previousPhaseEnd;
     double ending = numeric_limits<double>::infinity();
@@ -306,7 +306,7 @@ TimelinePhase* CreateTimelinePhase(Body* body,
     }
 
     // Get the orbit reference frame.
-    ReferenceFrame* orbitFrame;
+    ReferenceFrame::SharedConstPtr orbitFrame;
     Value* frameValue = phaseData->getValue("OrbitFrame");
     if (frameValue != nullptr)
     {
@@ -321,17 +321,15 @@ TimelinePhase* CreateTimelinePhase(Body* body,
         // No orbit frame specified; use the default frame.
         orbitFrame = defaultOrbitFrame;
     }
-    orbitFrame->addRef();
 
     // Get the body reference frame
-    ReferenceFrame* bodyFrame;
+    ReferenceFrame::SharedConstPtr bodyFrame;
     Value* bodyFrameValue = phaseData->getValue("BodyFrame");
     if (bodyFrameValue != nullptr)
     {
         bodyFrame = CreateReferenceFrame(universe, bodyFrameValue, defaultBodyFrame->getCenter(), body);
         if (bodyFrame == nullptr)
         {
-            orbitFrame->release();
             return nullptr;
         }
     }
@@ -340,7 +338,6 @@ TimelinePhase* CreateTimelinePhase(Body* body,
         // No body frame specified; use the default frame.
         bodyFrame = defaultBodyFrame;
     }
-    bodyFrame->addRef();
 
     // Use planet units (AU for semimajor axis) if the center of the orbit
     // reference frame is a star.
@@ -351,8 +348,6 @@ TimelinePhase* CreateTimelinePhase(Body* body,
     if (!orbit)
     {
         clog << "Error: missing orbit in timeline phase.\n";
-        bodyFrame->release();
-        orbitFrame->release();
         return nullptr;
     }
 
@@ -368,17 +363,15 @@ TimelinePhase* CreateTimelinePhase(Body* body,
         rotationModel = new ConstantOrientation(Quaterniond::Identity());
     }
 
-    TimelinePhase* phase = TimelinePhase::CreateTimelinePhase(universe,
-                                                              body,
-                                                              beginning, ending,
-                                                              *orbitFrame,
-                                                              *orbit,
-                                                              *bodyFrame,
-                                                              *rotationModel);
+    auto phase = TimelinePhase::CreateTimelinePhase(universe,
+                                                    body,
+                                                    beginning, ending,
+                                                    orbitFrame,
+                                                    *orbit,
+                                                    bodyFrame,
+                                                    *rotationModel);
 
     // Frame ownership transfered to phase; release local references
-    orbitFrame->release();
-    bodyFrame->release();
 
     return phase;
 }
@@ -387,9 +380,9 @@ TimelinePhase* CreateTimelinePhase(Body* body,
 Timeline* CreateTimelineFromArray(Body* body,
                                   Universe& universe,
                                   ValueArray* timelineArray,
-                                  const string& path,
-                                  ReferenceFrame* defaultOrbitFrame,
-                                  ReferenceFrame* defaultBodyFrame)
+                                  const fs::path& path,
+                                  const ReferenceFrame::SharedConstPtr& defaultOrbitFrame,
+                                  const ReferenceFrame::SharedConstPtr& defaultBodyFrame)
 {
     auto* timeline = new Timeline();
     double previousEnding = -numeric_limits<double>::infinity();
@@ -407,11 +400,11 @@ Timeline* CreateTimelineFromArray(Body* body,
         bool isFirstPhase = iter == timelineArray->begin();
         bool isLastPhase = *iter == timelineArray->back();
 
-        TimelinePhase* phase = CreateTimelinePhase(body, universe, phaseData,
-                                                   path,
-                                                   defaultOrbitFrame,
-                                                   defaultBodyFrame,
-                                                   isFirstPhase, isLastPhase, previousEnding);
+        auto phase = CreateTimelinePhase(body, universe, phaseData,
+                                         path,
+                                         defaultOrbitFrame,
+                                         defaultBodyFrame,
+                                         isFirstPhase, isLastPhase, previousEnding);
         if (phase == nullptr)
         {
             clog << "Error in timeline of '" << body->getName() << "', phase " << iter - timelineArray->begin() + 1 << endl;
@@ -432,7 +425,7 @@ static bool CreateTimeline(Body* body,
                            PlanetarySystem* system,
                            Universe& universe,
                            Hash* planetData,
-                           const string& path,
+                           const fs::path& path,
                            DataDisposition disposition,
                            BodyType bodyType)
 {
@@ -457,14 +450,12 @@ static bool CreateTimeline(Body* body,
         return false;
     }
 
-    ReferenceFrame* defaultOrbitFrame = nullptr;
-    ReferenceFrame* defaultBodyFrame = nullptr;
+    ReferenceFrame::SharedConstPtr defaultOrbitFrame;
+    ReferenceFrame::SharedConstPtr defaultBodyFrame;
     if (bodyType == SurfaceObject)
     {
-        defaultOrbitFrame = new BodyFixedFrame(parentObject, parentObject);
+        defaultOrbitFrame = make_shared<BodyFixedFrame>(parentObject, parentObject);
         defaultBodyFrame = CreateTopocentricFrame(parentObject, parentObject, Selection(body));
-        defaultOrbitFrame->addRef();
-        defaultBodyFrame->addRef();
     }
     else
     {
@@ -480,8 +471,6 @@ static bool CreateTimeline(Body* body,
         if (value->getType() != Value::ArrayType)
         {
             clog << "Error: Timeline must be an array\n";
-            delete defaultBodyFrame;
-            delete defaultOrbitFrame;
             return false;
         }
 
@@ -496,8 +485,8 @@ static bool CreateTimeline(Body* body,
     }
 
     // Information required for the object timeline.
-    ReferenceFrame* orbitFrame   = nullptr;
-    ReferenceFrame* bodyFrame    = nullptr;
+    ReferenceFrame::SharedConstPtr orbitFrame;
+    ReferenceFrame::SharedConstPtr bodyFrame;
     Orbit* orbit                 = nullptr;
     RotationModel* rotationModel = nullptr;
     double beginning             = -numeric_limits<double>::infinity();
@@ -518,7 +507,7 @@ static bool CreateTimeline(Body* body,
         const Timeline* timeline = body->getTimeline();
         if (timeline->phaseCount() == 1)
         {
-            const TimelinePhase* phase = timeline->getPhase(0);
+            auto phase = timeline->getPhase(0).get();
             orbitFrame    = phase->orbitFrame();
             bodyFrame     = phase->bodyFrame();
             orbit         = phase->orbit();
@@ -533,7 +522,7 @@ static bool CreateTimeline(Body* body,
     Value* frameValue = planetData->getValue("OrbitFrame");
     if (frameValue != nullptr)
     {
-        ReferenceFrame* frame = CreateReferenceFrame(universe, frameValue, parentObject, body);
+        auto frame = CreateReferenceFrame(universe, frameValue, parentObject, body);
         if (frame != nullptr)
         {
             orbitFrame = frame;
@@ -547,7 +536,7 @@ static bool CreateTimeline(Body* body,
     Value* bodyFrameValue = planetData->getValue("BodyFrame");
     if (bodyFrameValue != nullptr)
     {
-        ReferenceFrame* frame = CreateReferenceFrame(universe, bodyFrameValue, parentObject, body);
+        auto frame = CreateReferenceFrame(universe, bodyFrameValue, parentObject, body);
         if (frame != nullptr)
         {
             bodyFrame = frame;
@@ -582,7 +571,6 @@ static bool CreateTimeline(Body* body,
         else
         {
             clog << "No valid orbit specified for object '" << body->getName() << "'. Skipping.\n";
-            delete defaultOrbitFrame;
             return false;
         }
     }
@@ -629,23 +617,19 @@ static bool CreateTimeline(Body* body,
         if (beginning >= ending)
         {
             clog << "Beginning time must be before Ending time.\n";
-            delete defaultBodyFrame;
-            delete bodyFrame;
-            delete defaultOrbitFrame;
-            delete orbitFrame;
             delete rotationModel;
             return false;
         }
 
         // We finally have an orbit, rotation model, frames, and time range. Create
         // the object timeline.
-        TimelinePhase* phase = TimelinePhase::CreateTimelinePhase(universe,
-                                                                  body,
-                                                                  beginning, ending,
-                                                                  *orbitFrame,
-                                                                  *orbit,
-                                                                  *bodyFrame,
-                                                                  *rotationModel);
+        auto phase = TimelinePhase::CreateTimelinePhase(universe,
+                                                        body,
+                                                        beginning, ending,
+                                                        orbitFrame,
+                                                        *orbit,
+                                                        bodyFrame,
+                                                        *rotationModel);
 
         // We've already checked that beginning < ending; nothing else should go
         // wrong during the creation of a TimelinePhase.
@@ -690,7 +674,7 @@ static Body* CreateBody(const string& name,
                         Universe& universe,
                         Body* existingBody,
                         Hash* planetData,
-                        const string& path,
+                        const fs::path& path,
                         DataDisposition disposition,
                         BodyType bodyType)
 {
@@ -805,18 +789,19 @@ static Body* CreateBody(const string& name,
     if (classification & CLASSES_UNCLICKABLE)
         body->setClickable(false);
 
-    string infoURL;
+    string infoURL; // FIXME: should be own class
     if (planetData->getString("InfoURL", infoURL))
     {
         if (infoURL.find(':') == string::npos)
         {
             // Relative URL, the base directory is the current one,
             // not the main installation directory
-            if (path[1] == ':')
+            const string p = path.string();
+            if (p[1] == ':')
                 // Absolute Windows path, file:/// is required
-                infoURL = "file:///" + path + "/" + infoURL;
-            else if (!path.empty())
-                infoURL = path + "/" + infoURL;
+                infoURL = "file:///" + p + "/" + infoURL;
+            else if (!p.empty())
+                infoURL = p + "/" + infoURL;
         }
         body->setInfoURL(infoURL);
     }
@@ -1044,7 +1029,7 @@ static Body* CreateReferencePoint(const string& name,
                                   Universe& universe,
                                   Body* existingBody,
                                   Hash* refPointData,
-                                  const string& path,
+                                  const fs::path& path,
                                   DataDisposition disposition)
 {
     Body* body = nullptr;
@@ -1095,12 +1080,13 @@ static Body* CreateReferencePoint(const string& name,
 
 bool LoadSolarSystemObjects(istream& in,
                             Universe& universe,
-                            const std::string& directory)
+                            const fs::path& directory)
 {
     Tokenizer tokenizer(&in);
     Parser parser(&tokenizer);
 
-    bindtextdomain(directory.c_str(), directory.c_str()); // domain name is the same as resource path
+    const char* d = directory.string().c_str();
+    bindtextdomain(d, d); // domain name is the same as resource path
 
     while (tokenizer.nextToken() != Tokenizer::TokenEnd)
     {
@@ -1257,16 +1243,11 @@ bool LoadSolarSystemObjects(istream& in,
                     body = CreateBody(primaryName, parentSystem, universe, existingBody, objectData, directory, disposition, bodyType);
 
                 if (body != nullptr)
-                    body->loadCategories(objectData, disposition, directory);
-                if (body != nullptr && disposition == DataDisposition::Add)
                 {
-                    vector<string>::const_iterator iter = names.begin();
-                    iter++;
-                    while (iter != names.end())
-                    {
-                        body->addAlias(*iter);
-                        iter++;
-                    }
+                    body->loadCategories(objectData, disposition, directory.string());
+                    if (disposition == DataDisposition::Add)
+                        for (const auto& name : names)
+                            body->addAlias(name);
                 }
             }
         }
@@ -1285,7 +1266,7 @@ bool LoadSolarSystemObjects(istream& in,
             if (parent.body() != nullptr)
             {
                 Location* location = CreateLocation(objectData, parent.body());
-                location->loadCategories(objectData, disposition, directory);
+                location->loadCategories(objectData, disposition, directory.string());
                 if (location != nullptr)
                 {
                     location->setName(primaryName);

@@ -71,9 +71,9 @@ std::ofstream hdrlog;
 #ifdef _WIN32
 #include <GL/wglew.h>
 #else
-#ifndef TARGET_OS_MAC
+#ifndef __APPLE__
 #include <GL/glxew.h>
-#endif // TARGET_OS_MAC
+#endif // __APPLE__
 #endif //_WIN32
 #endif // VIDEO_SYNC
 #include <algorithm>
@@ -517,6 +517,16 @@ Renderer::Renderer() :
     }
 
     shaderManager = new ShaderManager();
+
+    mountainRep        = MarkerRepresentation(MarkerRepresentation::Triangle, 8.0f, LocationLabelColor);
+    craterRep          = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, LocationLabelColor);
+    observatoryRep     = MarkerRepresentation(MarkerRepresentation::Plus,     8.0f, LocationLabelColor);
+    cityRep            = MarkerRepresentation(MarkerRepresentation::X,        3.0f, LocationLabelColor);
+    genericLocationRep = MarkerRepresentation(MarkerRepresentation::Square,   8.0f, LocationLabelColor);
+    galaxyRep          = MarkerRepresentation(MarkerRepresentation::Triangle, 8.0f, GalaxyLabelColor);
+    nebulaRep          = MarkerRepresentation(MarkerRepresentation::Square,   8.0f, NebulaLabelColor);
+    openClusterRep     = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, OpenClusterLabelColor);
+    globularRep        = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, OpenClusterLabelColor);
 }
 
 
@@ -2205,7 +2215,7 @@ void Renderer::renderToBlurTexture(int blurLevel)
         drawGaussian3x3(xdelta, ydelta, blurTexWidth, blurTexHeight, 1.f);
         break;
 */
-#ifdef TARGET_OS_MAC
+#ifdef __APPLE__
     case 0:
         drawGaussian5x5(xdelta, ydelta, blurTexWidth, blurTexHeight, 1.f);
         break;
@@ -5362,13 +5372,6 @@ void Renderer::renderPlanet(Body& body,
 
         if (body.getLocations() != nullptr && (labelMode & LocationLabels) != 0)
         {
-            // Set up location markers for this body
-            mountainRep    = MarkerRepresentation(MarkerRepresentation::Triangle, 8.0f, LocationLabelColor);
-            craterRep      = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, LocationLabelColor);
-            observatoryRep = MarkerRepresentation(MarkerRepresentation::Plus,     8.0f, LocationLabelColor);
-            cityRep        = MarkerRepresentation(MarkerRepresentation::X,        3.0f, LocationLabelColor);
-            genericLocationRep = MarkerRepresentation(MarkerRepresentation::Square, 8.0f, LocationLabelColor);
-
             glEnable(GL_DEPTH_TEST);
             glDepthMask(GL_FALSE);
             glDisable(GL_BLEND);
@@ -5903,7 +5906,7 @@ void Renderer::buildRenderLists(const Vector3d& astrocentricObserverPos,
     unsigned int nChildren = tree != nullptr ? tree->childCount() : 0;
     for (unsigned int i = 0; i < nChildren; i++)
     {
-        const TimelinePhase* phase = tree->getChild(i);
+        auto phase = tree->getChild(i);
 
         // No need to do anything if the phase isn't active now
         if (!phase->includes(now))
@@ -5916,7 +5919,7 @@ void Renderer::buildRenderLists(const Vector3d& astrocentricObserverPos,
 
         // Get the position of the body relative to the sun.
         Vector3d p = phase->orbit()->positionAtTime(now);
-        ReferenceFrame* frame = phase->orbitFrame();
+        auto frame = phase->orbitFrame();
         Vector3d pos_s = frameCenter + frame->getOrientation(now).conjugate() * p;
 
         // We now have the positions of the observer and the planet relative
@@ -6123,7 +6126,7 @@ void Renderer::buildOrbitLists(const Vector3d& astrocentricObserverPos,
     unsigned int nChildren = tree != nullptr ? tree->childCount() : 0;
     for (unsigned int i = 0; i < nChildren; i++)
     {
-        const TimelinePhase* phase = tree->getChild(i);
+        auto phase = tree->getChild(i);
 
         // No need to do anything if the phase isn't active now
         if (!phase->includes(now))
@@ -6278,7 +6281,7 @@ void Renderer::buildLabelLists(const Frustum& viewFrustum,
                 {
                     bool isBehindPrimary = false;
 
-                    const TimelinePhase* phase = body->getTimeline()->findPhase(now);
+                    auto phase = body->getTimeline()->findPhase(now);
                     Body* primary = phase->orbitFrame()->getCenter().body();
                     if (primary != nullptr && (primary->getClassification() & Body::Invisible) != 0)
                     {
@@ -7031,11 +7034,6 @@ void Renderer::renderDeepSkyObjects(const Universe&  universe,
 
     dsoRenderer.labelThresholdMag = 2.0f * max(1.0f, (faintestMag - 4.0f) * (1.0f - 0.5f * (float) log10(effDistanceToScreen)));
 
-    galaxyRep      = MarkerRepresentation(MarkerRepresentation::Triangle, 8.0f, GalaxyLabelColor);
-    nebulaRep      = MarkerRepresentation(MarkerRepresentation::Square,   8.0f, NebulaLabelColor);
-    openClusterRep = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, OpenClusterLabelColor);
-    globularRep    = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, OpenClusterLabelColor);
-
     // Render any line primitives with smooth lines
     // (mostly to make graticules look good.)
     enableSmoothLines(renderFlags);
@@ -7105,7 +7103,7 @@ void Renderer::renderSkyGrids(const Observer& observer)
     if ((renderFlags & ShowHorizonGrid) != 0)
     {
         double tdb = observer.getTime();
-        const ObserverFrame* frame = observer.getFrame();
+        auto frame = observer.getFrame();
         Body* body = frame->getRefObject().body();
 
         if (body != nullptr)
@@ -7912,5 +7910,5 @@ bool Renderer::captureFrame(int x, int y, int w, int h, Renderer::PixelFormat fo
     glReadBuffer(back ? GL_BACK : GL_FRONT);
     glReadPixels(x, y, w, h, toGLFormat(format), GL_UNSIGNED_BYTE, (void*) buffer);
 
-    return glGetError == GL_NO_ERROR;
+    return glGetError() == GL_NO_ERROR;
 }
