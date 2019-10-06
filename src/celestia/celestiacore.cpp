@@ -49,7 +49,7 @@
 #include <cassert>
 #include <ctime>
 #include <set>
-#include <fmt/printf.h>
+#include <celutil/debug.h>
 #include <celutil/color.h>
 #include <celengine/vecgl.h>
 
@@ -88,6 +88,20 @@ static Console console(200, 120);
 static void warning(string s)
 {
     cout << s;
+}
+
+static bool is_valid_directory(const fs::path& dir)
+{
+    if (dir.empty())
+        return false;
+
+    if (!is_directory(dir))
+    {
+        fmt::fprintf(cerr, "Path %s doesn't exist or isn't a directory", dir);
+        return false;
+    }
+
+    return true;
 }
 
 
@@ -424,8 +438,7 @@ void showSelectionInfo(const Selection& sel)
 
     AngleAxisf aa(orientation);
 
-    fmt::printf(_("%s\nOrientation: [%f, %f, %f], %.1f\n"),
-                sel.getName(), aa.axis().x(), aa.axis().y(), aa.axis().z(), radToDeg(aa.angle()));
+    DPRINTF(LOG_LEVEL_VERBOSE, "%s\nOrientation: [%f, %f, %f], %.1f\n", sel.getName(), aa.axis().x(), aa.axis().y(), aa.axis().z(), radToDeg(aa.angle()));
 }
 
 
@@ -673,8 +686,8 @@ void CelestiaCore::mouseButtonUp(float x, float y, int button)
             Selection sel = sim->pickObject(pickRay, renderer->getRenderFlags(), pickTolerance);
             if (!sel.empty())
             {
-                if (contextMenuCallback != nullptr)
-                    contextMenuCallback(x, y, sel);
+                if (contextMenuHandler != nullptr)
+                    contextMenuHandler->requestContextMenu(x, y, sel);
             }
         }
         else if (button == MiddleButton)
@@ -2707,12 +2720,6 @@ void CelestiaCore::setActiveFrameVisible(bool visible)
 }
 
 
-void CelestiaCore::setContextMenuCallback(ContextMenuFunc callback)
-{
-    contextMenuCallback = callback;
-}
-
-
 Renderer* CelestiaCore::getRenderer() const
 {
     return renderer;
@@ -3998,7 +4005,7 @@ template <class OBJDB> class CatalogLoader
         if (catalogFile.good())
         {
             if (!objDB->load(catalogFile, filepath.parent_path()))
-                DPRINTF(0, "Error reading %s catalog file: %s\n", typeDesc.c_str(), filepath.string());
+                DPRINTF(LOG_LEVEL_ERROR, "Error reading %s catalog file: %s\n", typeDesc.c_str(), filepath.string());
         }
     }
 };
@@ -4112,7 +4119,7 @@ bool CelestiaCore::initSimulation(const fs::path& configFileName,
     // Next, read all the deep sky files in the extras directories
     for (const auto& dir : config->extrasDirs)
     {
-        if (dir.empty())
+        if (!is_valid_directory(dir))
             continue;
 
         DeepSkyLoader loader(dsoDB,
@@ -4153,7 +4160,7 @@ bool CelestiaCore::initSimulation(const fs::path& configFileName,
     {
         for (const auto& dir : config->extrasDirs)
         {
-            if (dir.empty())
+            if (!is_valid_directory(dir))
                 continue;
 
             SolarSystemLoader loader(universe, progressNotifier);
@@ -4245,7 +4252,7 @@ bool CelestiaCore::initRenderer()
     context->init(config->ignoreGLExtensions);
     // Choose the render path, starting with the least desirable
     context->setRenderPath(GLContext::GLPath_GLSL);
-    //fmt::printf(_("render path: %i\n"), context->getRenderPath());
+    //DPRINTF(LOG_LEVEL_VERBOSE, "render path: %i\n", context->getRenderPath());
 #endif
 
     Renderer::DetailOptions detailOptions;
@@ -4409,7 +4416,7 @@ bool CelestiaCore::readStars(const CelestiaConfig& cfg,
     // Now, read supplemental star files from the extras directories
     for (const auto& dir : config->extrasDirs)
     {
-        if (dir.empty())
+        if (!is_valid_directory(dir))
             continue;
 
         StarLoader loader(starDB, "star", Content_CelestiaStarCatalog, progressNotifier);
@@ -4474,6 +4481,16 @@ void CelestiaCore::setCursorHandler(CursorHandler* handler)
 CelestiaCore::CursorHandler* CelestiaCore::getCursorHandler() const
 {
     return cursorHandler;
+}
+
+void CelestiaCore::setContextMenuHandler(ContextMenuHandler* handler)
+{
+    contextMenuHandler = handler;
+}
+
+CelestiaCore::ContextMenuHandler* CelestiaCore::getContextMenuHandler() const
+{
+    return contextMenuHandler;
 }
 
 int CelestiaCore::getTimeZoneBias() const
@@ -4892,7 +4909,7 @@ bool CelestiaCore::initLuaHook(ProgressNotifier* progressNotifier)
     // Find the path for lua files in the extras directories
     for (const auto& dir : config->extrasDirs)
     {
-        if (dir.empty())
+        if (!is_valid_directory(dir))
             continue;
 
         LuaPathFinder loader;

@@ -14,7 +14,7 @@
 #include <fstream>
 #include <string>
 #include <utility>
-#include <fmt/printf.h>
+#include <celutil/debug.h>
 #include <GL/glew.h>
 #include <celutil/debug.h>
 #include <celcompat/filesystem.h>
@@ -55,14 +55,14 @@ static inline unsigned int lodOffset(unsigned int lod)
 #endif
 
 
-VirtualTexture::VirtualTexture(fs::path _tilePath,
+VirtualTexture::VirtualTexture(const fs::path& _tilePath,
                                unsigned int _baseSplit,
                                unsigned int _tileSize,
-                               string _tilePrefix,
+                               const string& _tilePrefix,
                                const string& _tileType) :
     Texture(_tileSize << (_baseSplit + 1), _tileSize << _baseSplit),
-    tilePath(std::move(_tilePath)),
-    tilePrefix(std::move(_tilePrefix)),
+    tilePath(_tilePath),
+    tilePrefix(_tilePrefix),
     baseSplit(_baseSplit),
     tileSize(_tileSize),
     ticks(0),
@@ -71,7 +71,7 @@ VirtualTexture::VirtualTexture(fs::path _tilePath,
     assert(tileSize != 0 && isPow2(tileSize));
     tileTree[0] = new TileQuadtreeNode();
     tileTree[1] = new TileQuadtreeNode();
-    tileExt = string(".") + _tileType;
+    tileExt = fmt::sprintf(".%s", _tileType);
     populateTileTree();
 
     if (DetermineFileType(tileExt) == Content_DXT5NormalMap)
@@ -204,8 +204,9 @@ ImageTexture* VirtualTexture::loadTileTexture(unsigned int lod, unsigned int u, 
     lod >>= baseSplit;
     assert(lod < (unsigned)MaxResolutionLevels);
 
-    auto path = fs::path(fmt::sprintf("%slevel%d", tilePath, lod)) /
-                fmt::sprintf("%s%d_%d%s", tilePrefix, u, v, tileExt);
+    auto path = tilePath /
+                fmt::sprintf("level%d", lod) /
+                fmt::sprintf("%s%d_%d%s", tilePrefix, u, v, tileExt.string());
 
     Image* img = LoadImageFromFile(path);
     if (img == nullptr)
@@ -258,7 +259,7 @@ void VirtualTexture::populateTileTree()
 
     for (int i = 0; i < MaxResolutionLevels; i++)
     {
-        fs::path path(fmt::sprintf("%slevel%d", tilePath, i));
+        fs::path path = tilePath / fmt::sprintf("level%d", i);
         if (fs::is_directory(path))
         {
             maxLevel = i + baseSplit;
@@ -268,7 +269,7 @@ void VirtualTexture::populateTileTree()
             for (auto& d : fs::directory_iterator(path))
             {
                 int u = -1, v = -1;
-                if (sscanf(d.path().string().c_str(), pattern.c_str(), &u, &v) == 2)
+                if (sscanf(d.path().filename().string().c_str(), pattern.c_str(), &u, &v) == 2)
                 {
                     if (u >= 0 && v >= 0 && u < uLimit && v < vLimit)
                     {
@@ -313,7 +314,7 @@ static VirtualTexture* CreateVirtualTexture(Hash* texParams,
     string imageDirectory;
     if (!texParams->getString("ImageDirectory", imageDirectory))
     {
-        DPRINTF(0, "ImageDirectory missing in virtual texture.\n");
+        DPRINTF(LOG_LEVEL_ERROR, "ImageDirectory missing in virtual texture.\n");
         return nullptr;
     }
 
@@ -321,14 +322,14 @@ static VirtualTexture* CreateVirtualTexture(Hash* texParams,
     if (!texParams->getNumber("BaseSplit", baseSplit) ||
         baseSplit < 0.0 || baseSplit != floor(baseSplit))
     {
-        DPRINTF(0, "BaseSplit in virtual texture missing or has bad value\n");
+        DPRINTF(LOG_LEVEL_ERROR, "BaseSplit in virtual texture missing or has bad value\n");
         return nullptr;
     }
 
     double tileSize = 0.0;
     if (!texParams->getNumber("TileSize", tileSize))
     {
-        DPRINTF(0, "TileSize is missing from virtual texture\n");
+        DPRINTF(LOG_LEVEL_ERROR, "TileSize is missing from virtual texture\n");
         return nullptr;
     }
 
@@ -336,7 +337,7 @@ static VirtualTexture* CreateVirtualTexture(Hash* texParams,
         tileSize < 64.0 ||
         !isPow2((int) tileSize))
     {
-        DPRINTF(0, "Virtual texture tile size must be a power of two >= 64\n");
+        DPRINTF(LOG_LEVEL_ERROR, "Virtual texture tile size must be a power of two >= 64\n");
         return nullptr;
     }
 
@@ -375,7 +376,7 @@ static VirtualTexture* LoadVirtualTexture(istream& in, const fs::path& path)
     Value* texParamsValue = parser.readValue();
     if (texParamsValue == nullptr || texParamsValue->getType() != Value::HashType)
     {
-        DPRINTF(0, "Error parsing virtual texture\n");
+        DPRINTF(LOG_LEVEL_ERROR, "Error parsing virtual texture\n");
         delete texParamsValue;
         return nullptr;
     }
@@ -395,7 +396,7 @@ VirtualTexture* LoadVirtualTexture(const fs::path& filename)
 
     if (!in.good())
     {
-        //DPRINTF(0, "Error opening virtual texture file: %s\n", filename.c_str());
+        //DPRINTF(LOG_LEVEL_ERROR, "Error opening virtual texture file: %s\n", filename.c_str());
         return nullptr;
     }
 

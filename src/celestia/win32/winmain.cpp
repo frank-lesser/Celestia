@@ -1786,12 +1786,6 @@ void ShowWWWInfo(const Selection& sel)
 }
 
 
-void ContextMenu(float x, float y, Selection sel)
-{
-    handlePopupMenu(mainWindow, x, y, sel);
-}
-
-
 bool EnableFullScreen(const DEVMODE& dm)
 {
     DEVMODE devMode;
@@ -1876,7 +1870,7 @@ bool SetDCPixelFormat(HDC hDC)
             PFD_SUPPORT_OPENGL |    // Support OpenGL calls in window
             PFD_DOUBLEBUFFER,        // Double buffered mode
             PFD_TYPE_RGBA,        // RGBA Color mode
-            GetDeviceCaps(hDC, BITSPIXEL),// Want the display bit depth
+            (BYTE)GetDeviceCaps(hDC, BITSPIXEL),// Want the display bit depth
             0,0,0,0,0,0,          // Not used to select mode
             0,0,            // Not used to select mode
             0,0,0,0,0,            // Not used to select mode
@@ -2238,7 +2232,7 @@ static void BuildScriptsMenu(HMENU menuBar, const fs::path& scriptsDir)
     }
 
     MENUITEMINFO info;
-    memset(&info, sizeof(info), 0);
+    memset(&info, 0, sizeof(info));
     info.cbSize = sizeof(info);
     info.fMask = MIIM_SUBMENU;
 
@@ -2346,6 +2340,15 @@ public:
                    msg.c_str(),
                    "Fatal Error",
                    MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+    }
+};
+
+class WinContextMenuHandler : public CelestiaCore::ContextMenuHandler
+{
+public:
+    void requestContextMenu(float x, float y, Selection sel)
+    {
+        handlePopupMenu(mainWindow, x, y, sel);
     }
 };
 
@@ -3025,7 +3028,7 @@ static char* skipSpace(char* s)
 
 static char* skipUntilQuote(char* s)
 {
-    while (*s != '"' && s != '\0')
+    while (*s != '"' && *s != '\0')
         s++;
     return s;
 }
@@ -3524,7 +3527,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
     BuildScriptsMenu(menuBar, ScriptsDirectory);
     syncMenusWithRendererState();
 
-    appCore->setContextMenuCallback(ContextMenu);
+    appCore->setContextMenuHandler(new WinContextMenuHandler());
 
     bReady = true;
 

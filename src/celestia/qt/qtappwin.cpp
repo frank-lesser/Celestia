@@ -84,12 +84,6 @@ const QPoint DEFAULT_MAIN_WINDOW_POSITION(20, 20);
 // new dockables or toolbars are added.
 static const int CELESTIA_MAIN_WINDOW_VERSION = 12;
 
-
-// Terrible hack required because context menu callback doesn't retain
-// any state.
-static CelestiaAppWindow* MainWindowInstance = nullptr;
-static void ContextMenu(float x, float y, Selection sel);
-
 static int fps_to_ms(int fps) { return fps > 0 ? 1000 / fps : 0; }
 static int ms_to_fps(int ms) { return ms > 0? 1000 / ms : 0; }
 
@@ -182,7 +176,8 @@ void FPSActionGroup::updateFPS(int fps)
 }
 
 CelestiaAppWindow::CelestiaAppWindow(QWidget* parent) :
-    QMainWindow(parent)
+    QMainWindow(parent),
+    CelestiaCore::ContextMenuHandler()
 {
     setObjectName("celestia-mainwin");
     timer = new QTimer(this);
@@ -268,8 +263,7 @@ void CelestiaAppWindow::init(const QString& qConfigFileName,
     }
 
     m_appCore->setCursorHandler(glWidget);
-    m_appCore->setContextMenuCallback(ContextMenu);
-    MainWindowInstance = this; // TODO: Fix context menu callback
+    m_appCore->setContextMenuHandler(this);
 
     setCentralWidget(glWidget);
 
@@ -1127,16 +1121,6 @@ void CelestiaAppWindow::createMenus()
     connect(copyImageAction, SIGNAL(triggered()), this, SLOT(slotCopyImage()));
     fileMenu->addAction(copyImageAction);
 
-    QAction* copyURLAction = new QAction(QIcon(":/icons/clip_copy.png"), _("Copy &URL"), this);
-    copyURLAction->setShortcut(QKeySequence::Copy);
-    connect(copyURLAction, SIGNAL(triggered()), this, SLOT(slotCopyURL()));
-    fileMenu->addAction(copyURLAction);
-
-    QAction* pasteURLAction = new QAction(QIcon(":/icons/clip_paste.png"), _("&Paste URL"), this);
-    //pasteURLAction->setShortcut(QKeySequence::Paste);  // conflicts with cycle render path command
-    connect(pasteURLAction, SIGNAL(triggered()), this, SLOT(slotPasteURL()));
-    fileMenu->addAction(pasteURLAction);
-
     fileMenu->addSeparator();
 
     QAction* openScriptAction = new QAction(QIcon(":/icons/script2.png"), _("&Open Script..."), this);
@@ -1178,14 +1162,14 @@ void CelestiaAppWindow::createMenus()
     connect(gotoObjAct, SIGNAL(triggered()), this, SLOT(gotoObject()));
     navMenu->addAction(gotoObjAct);
 
-    QAction *copyAction = new QAction(QIcon(":/icons/clip_copy.png"), _("Copy search console text"), this);
-    copyAction->setShortcut(QString("F5"));
-    connect(copyAction, &QAction::triggered, this, &CelestiaAppWindow::copyText);
+    QAction *copyAction = new QAction(QIcon(":/icons/clip_copy.png"), _("Copy URL / console text"), this);
+    copyAction->setShortcut(QString("Ctrl+C"));
+    connect(copyAction, &QAction::triggered, this, &CelestiaAppWindow::copyTextOrURL);
     navMenu->addAction(copyAction);
 
-    QAction *pasteAction = new QAction(QIcon(":/icons/clip_paste.png"), _("Paste into search console"), this);
-    pasteAction->setShortcut(QString("F6"));
-    connect(pasteAction, &QAction::triggered, this, &CelestiaAppWindow::pasteText);
+    QAction *pasteAction = new QAction(QIcon(":/icons/clip_paste.png"), _("Paste URL / console text"), this);
+    pasteAction->setShortcut(QString("Ctrl+V"));
+    connect(pasteAction, &QAction::triggered, this, &CelestiaAppWindow::pasteTextOrURL);
     navMenu->addAction(pasteAction);
 
     /****** Time menu ******/
@@ -1494,7 +1478,7 @@ void CelestiaAppWindow::setCustomFPS()
         fpsActions->updateFPS(fpsActions->lastFPS());
 }
 
-void CelestiaAppWindow::contextMenu(float x, float y, Selection sel)
+void CelestiaAppWindow::requestContextMenu(float x, float y, Selection sel)
 {
     SelectionPopup* menu = new SelectionPopup(sel, m_appCore, this);
     connect(menu, SIGNAL(selectionInfoRequested(Selection&)),
@@ -1529,10 +1513,11 @@ QMenu* CelestiaAppWindow::buildScriptsMenu()
     return menu;
 }
 
-
-void ContextMenu(float x, float y, Selection sel)
+void CelestiaAppWindow::copyText()
 {
-    MainWindowInstance->contextMenu(x, y, sel);
+    QString text(m_appCore->getTypedText().c_str());
+    if (!text.isEmpty())
+        QGuiApplication::clipboard()->setText(text);
 }
 
 void CelestiaAppWindow::pasteText()
@@ -1542,9 +1527,18 @@ void CelestiaAppWindow::pasteText()
         m_appCore->setTypedText(text.toUtf8().data());
 }
 
-void CelestiaAppWindow::copyText()
+void CelestiaAppWindow::copyTextOrURL()
 {
-    QString text(m_appCore->getTypedText().c_str());
-    if (!text.isEmpty())
-        QGuiApplication::clipboard()->setText(text);
+    if (m_appCore->getTextEnterMode()) // True when the search console is opened
+        copyText();
+    else
+        slotCopyURL();
+}
+
+void CelestiaAppWindow::pasteTextOrURL()
+{
+    if (m_appCore->getTextEnterMode()) // True when the search console is opened
+        pasteText();
+    else
+        slotPasteURL();
 }
