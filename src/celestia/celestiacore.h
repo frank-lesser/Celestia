@@ -10,25 +10,31 @@
 #ifndef _CELESTIACORE_H_
 #define _CELESTIACORE_H_
 
+#include <celutil/filetype.h>
 #include <celutil/timer.h>
 #include <celutil/watcher.h>
 // #include <celutil/watchable.h>
 #include <celengine/solarsys.h>
 #include <celengine/overlay.h>
-#include "command.h"
-#include "execution.h"
 #include <celengine/texture.h>
 #include <celengine/universe.h>
 #include <celengine/render.h>
 #include <celengine/simulation.h>
+#include <celengine/overlayimage.h>
 #include <GL/glew.h>
 #include "configfile.h"
 #include "favorites.h"
 #include "destination.h"
 #include "moviecapture.h"
+#include "view.h"
 #ifdef CELX
-#include "celx.h"
+#include <celscript/lua/celx.h>
+#include <celscript/lua/luascript.h>
 #endif
+#include <celscript/common/script.h>
+#include <celscript/legacy/legacyscript.h>
+#include <celscript/common/scriptmaps.h>
+
 class Url;
 
 // class CelestiaWatcher;
@@ -47,44 +53,11 @@ public:
     virtual void update(const std::string&) = 0;
 };
 
-class View
-{
- public:
-    enum Type {
-        ViewWindow      = 1,
-        HorizontalSplit = 2,
-        VerticalSplit   = 3
-    };
-
-    View(Type, Observer*, float, float, float, float);
-
-    void mapWindowToView(float, float, float&, float&) const;
-
- public:
-    Type type;
-
-    Observer* observer;
-    View *parent;
-    View *child1;
-    View *child2;
-    float x;
-    float y;
-    float width;
-    float height;
-    uint64_t renderFlags;
-    int labelMode;
-    float zoom;
-    float alternateZoom;
-
-    void walkTreeResize(View*, int);
-    bool walkTreeResizeDelta(View*, float, bool);
-};
-
-
 class CelestiaCore // : public Watchable<CelestiaCore>
 {
  public:
-    enum {
+    enum
+    {
         LeftButton   = 0x01,
         MiddleButton = 0x02,
         RightButton  = 0x04,
@@ -92,7 +65,8 @@ class CelestiaCore // : public Watchable<CelestiaCore>
         ControlKey   = 0x10,
     };
 
-    enum CursorShape {
+    enum CursorShape
+    {
         ArrowCursor         = 0,
         UpArrowCursor       = 1,
         CrossCursor         = 2,
@@ -112,13 +86,15 @@ class CelestiaCore // : public Watchable<CelestiaCore>
         WhatsThisCursor     = 16,
     };
 
-    enum {
+    enum
+    {
         Joy_XAxis           = 0,
         Joy_YAxis           = 1,
         Joy_ZAxis           = 2,
     };
 
-    enum {
+    enum
+    {
         JoyButton1          = 0,
         JoyButton2          = 1,
         JoyButton3          = 2,
@@ -130,7 +106,8 @@ class CelestiaCore // : public Watchable<CelestiaCore>
         JoyButtonCount      = 8,
     };
 
-    enum {
+    enum
+    {
         Key_Left            =  1,
         Key_Right           =  2,
         Key_Up              =  3,
@@ -195,37 +172,6 @@ class CelestiaCore // : public Watchable<CelestiaCore>
         ShowVelocity  = 0x004,
         ShowSelection = 0x008,
         ShowFrame     = 0x010,
-    };
-
- private:
-    class OverlayImage
-    {
-     public:
-        OverlayImage(fs::path, Overlay*);
-        ~OverlayImage() { delete texture; }
-        OverlayImage()               =default;
-        OverlayImage(OverlayImage&)  =delete;
-        OverlayImage(OverlayImage&&) =delete;
-
-        void render(float, int, int);
-        inline bool isNewImage(const fs::path& f) { return filename != f; }
-
-        void setStartTime(float t) { start = t; }
-        void setDuration(float t) { duration = t; }
-        void setOffset(float x, float y) { offsetX = x; offsetY = y; }
-        void setAlpha(float t) { alpha = t; }
-        void fitScreen(bool t) { fitscreen = t; }
-
-     private:
-        float start{ 0.0f };
-        float duration{ 0.0f };
-        float offsetX{ 0.0f };
-        float offsetY{ 0.0f };
-        float alpha{ 0.0f };
-        bool  fitscreen{ false };
-        fs::path filename;
-        Texture* texture{ nullptr };
-        Overlay* overlay;
     };
 
  public:
@@ -301,7 +247,6 @@ class CelestiaCore // : public Watchable<CelestiaCore>
     bool isCaptureActive();
     bool isRecording();
 
-    void runScript(CommandSequence*);
     void runScript(const fs::path& filename);
     void cancelScript();
     void resumeScript();
@@ -321,6 +266,8 @@ class CelestiaCore // : public Watchable<CelestiaCore>
     void setFaintest(float);
     void setFaintestAutoMag();
 
+    std::vector<Observer*> getObservers() const;
+    View* getViewByObserver(const Observer*) const;
     void splitView(View::Type type, View* av = nullptr, float splitPos = 0.5f);
     void singleView(View* av = nullptr);
     void deleteView(View* v = nullptr);
@@ -383,10 +330,15 @@ class CelestiaCore // : public Watchable<CelestiaCore>
 
     void fatalError(const std::string&, bool visual = true);
 
-    void setScriptImage(float, float, float, float, const fs::path&, bool);
+    void setScriptImage(std::unique_ptr<OverlayImage>&&);
 
     const std::string& getTypedText() const { return typedText; }
     void setTypedText(const char *);
+
+    void setScriptHook(std::unique_ptr<celestia::scripts::IScriptHook> &&hook) { m_scriptHook = std::move(hook); }
+    const std::shared_ptr<celestia::scripts::ScriptMaps>& scriptMaps() const { return m_scriptMaps; }
+
+    bool saveScreenShot(const fs::path&, ContentType = Content_Unknown) const;
 
  protected:
     bool readStars(const CelestiaConfig&, ProgressNotifier*);
@@ -425,7 +377,7 @@ class CelestiaCore // : public Watchable<CelestiaCore>
     const Color activeFrameColor{ 0.5f, 0.5f, 1.0f, 1.0f };
     const Color consoleColor{ 0.7f, 0.7f, 1.0f, 0.2f };
 
-    OverlayImage *image{ nullptr };
+    std::unique_ptr<OverlayImage> image;
 
     std::string typedText;
     std::vector<std::string> typedTextCompletion;
@@ -444,14 +396,13 @@ class CelestiaCore // : public Watchable<CelestiaCore>
 
     Timer* timer{ nullptr };
 
-    Execution* runningScript{ nullptr };
-    ExecutionEnvironment* execEnv{ nullptr };
-
+    std::unique_ptr<celestia::scripts::IScript>             m_script;
+    std::unique_ptr<celestia::scripts::IScriptHook>         m_scriptHook;
+    std::unique_ptr<celestia::scripts::LegacyScriptPlugin>  m_legacyPlugin;
 #ifdef CELX
-    LuaState* celxScript{ nullptr };
-    LuaState* luaHook{ nullptr };     // Lua hook context
-    LuaState* luaSandbox{ nullptr };  // Safe Lua context for ssc scripts
-#endif // CELX
+    std::unique_ptr<celestia::scripts::LuaScriptPlugin>     m_luaPlugin;
+#endif
+    std::shared_ptr<celestia::scripts::ScriptMaps>          m_scriptMaps;
 
     enum ScriptState
     {
@@ -490,8 +441,6 @@ class CelestiaCore // : public Watchable<CelestiaCore>
 
     MovieCapture* movieCapture{ nullptr };
     bool recording{ false };
-
-    Texture* logoTexture{ nullptr };
 
     Alerter* alerter{ nullptr };
     std::vector<CelestiaWatcher*> watchers;

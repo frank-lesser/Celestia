@@ -33,13 +33,12 @@
 #include <celutil/winutil.h>
 #include <celutil/filetype.h>
 #include <celengine/astro.h>
-#include <celestia/cmdparser.h>
+#include <celscript/legacy/cmdparser.h>
 #include <celengine/axisarrow.h>
 #include <celengine/planetgrid.h>
 
 #include <GL/glew.h>
 #include "celestia/celestiacore.h"
-#include "celestia/imagecapture.h"
 #include "celestia/avicapture.h"
 #include "celestia/url.h"
 #include "winstarbrowser.h"
@@ -2681,81 +2680,38 @@ static void HandleCaptureImage(HWND hWnd)
         // If you got here, a path and file has been specified.
         // Ofn.lpstrFile contains full path to specified file
         // Ofn.lpstrFileTitle contains just the filename with extension
-
-        // Get the dimensions of the current viewport
-        array<int,4> viewport;
-        appCore->getRenderer()->getScreenSize(viewport);
-
-        bool success = false;
-
-        DWORD nFileType=0;
         char defaultExtensions[][4] = {"jpg", "png"};
         if (Ofn.nFileExtension == 0)
         {
             // If no extension was specified, use the selection of filter to
             // determine which type of file should be created, instead of
             // just defaulting to JPEG.
-            nFileType = Ofn.nFilterIndex;
             strcat(Ofn.lpstrFile, ".");
-            strcat(Ofn.lpstrFile, defaultExtensions[nFileType-1]);
+            strcat(Ofn.lpstrFile, defaultExtensions[Ofn.nFilterIndex-1]);
         }
         else if (*(Ofn.lpstrFile + Ofn.nFileExtension) == '\0')
         {
             // If just a period was specified for the extension, use the
             // selection of filter to determine which type of file should be
             // created instead of just defaulting to JPEG.
-            nFileType = Ofn.nFilterIndex;
-            strcat(Ofn.lpstrFile, defaultExtensions[nFileType-1]);
+            strcat(Ofn.lpstrFile, defaultExtensions[Ofn.nFilterIndex-1]);
         }
-        else
+
+        ContentType type = DetermineFileType(Ofn.lpstrFile);
+        if (type != Content_JPEG && type != Content_PNG)
         {
-            switch (DetermineFileType(Ofn.lpstrFile))
-            {
-            case Content_JPEG:
-                nFileType = 1;
-                break;
-            case Content_PNG:
-                nFileType = 2;
-                break;
-            default:
-                nFileType = 0;
-                break;
-            }
+            MessageBox(hWnd,
+                       _("Please use a name ending in '.jpg' or '.png'."),
+                       "Error",
+                       MB_OK | MB_ICONERROR);
+            return;
         }
 
         // Redraw to make sure that the back buffer is up to date
         appCore->draw();
-
-        if (nFileType == 1)
+        if (!appCore->saveScreenShot(Ofn.lpstrFile))
         {
-            success = CaptureGLBufferToJPEG(string(Ofn.lpstrFile),
-                                            viewport[0], viewport[1],
-                                            viewport[2], viewport[3],
-                                            appCore->getRenderer());
-        }
-        else if (nFileType == 2)
-        {
-            success = CaptureGLBufferToPNG(string(Ofn.lpstrFile),
-                                           viewport[0], viewport[1],
-                                           viewport[2], viewport[3],
-                                           appCore->getRenderer());
-        }
-        else
-        {
-            // Invalid file extension specified.
-            DPRINTF(0, "WTF? Unknown file extension specified for screen capture.\n");
-        }
-
-        if (!success)
-        {
-            char errorMsg[64];
-
-            if(nFileType == 0)
-                sprintf(errorMsg, "Specified file extension is not recognized.");
-            else
-                sprintf(errorMsg, "Could not save image file.");
-
-            MessageBox(hWnd, errorMsg, "Error", MB_OK | MB_ICONERROR);
+            MessageBox(hWnd, "Could not save image file.", "Error", MB_OK | MB_ICONERROR);
         }
     }
 }
@@ -2909,40 +2865,7 @@ static void HandleOpenScript(HWND hWnd, CelestiaCore* appCore)
         // If you got here, a path and file has been specified.
         // Ofn.lpstrFile contains full path to specified file
         // Ofn.lpstrFileTitle contains just the filename with extension
-        ContentType type = DetermineFileType(Ofn.lpstrFile);
-
-        if (type == Content_CelestiaScript)
-        {
-            appCore->runScript(Ofn.lpstrFile);
-        }
-        else if (type == Content_CelestiaLegacyScript)
-        {
-            ifstream scriptfile(Ofn.lpstrFile);
-            if (!scriptfile.good())
-            {
-                MessageBox(hWnd, "Error opening script file.", "Error",
-                           MB_OK | MB_ICONERROR);
-            }
-            else
-            {
-                CommandParser parser(scriptfile);
-                CommandSequence* script = parser.parse();
-                if (script == NULL)
-                {
-                    const vector<string>* errors = parser.getErrors();
-                    const char* errorMsg = "";
-                    if (errors->size() > 0)
-                        errorMsg = (*errors)[0].c_str();
-                    MessageBox(hWnd, errorMsg, "Error in script file.",
-                               MB_OK | MB_ICONERROR);
-                }
-                else
-                {
-                    appCore->cancelScript(); // cancel any running script
-                    appCore->runScript(script);
-                }
-            }
-        }
+        appCore->runScript(Ofn.lpstrFile);
     }
 
     if (strlen(currentDir) != 0)
@@ -4010,43 +3933,9 @@ LRESULT CALLBACK MainWindowProc(HWND hWnd,
                         appCore->flash(_("Loading URL"));
                         appCore->goToUrl(urlString);
                     }
-                    else if (DetermineFileType(urlString) == Content_CelestiaScript)
-                    {
-                        appCore->runScript(urlString);
-                    }
                     else
                     {
-                        ifstream scriptfile(urlString.c_str());
-                        if (!scriptfile.good())
-                        {
-                            appCore->flash(_("Error opening script"));
-                        }
-                        else
-                        {
-                            // TODO: Need to fix memory leak with scripts;
-                            // a refcount is probably required.
-                            CommandParser parser(scriptfile);
-                            CommandSequence* script = parser.parse();
-                            if (script == NULL)
-                            {
-                                const vector<string>* errors = parser.getErrors();
-                                const char* errorMsg = "";
-                                if (errors->size() > 0)
-                                {
-                                    errorMsg = (*errors)[0].c_str();
-                                    appCore->flash(errorMsg);
-                                }
-                                else
-                                {
-                                    appCore->flash(_("Error loading script"));
-                                }
-                            }
-                            else
-                            {
-                                appCore->flash(_("Running script"));
-                                appCore->runScript(script);
-                            }
-                        }
+                        appCore->runScript(urlString);
                     }
                 }
             }

@@ -14,12 +14,9 @@
 #ifdef USE_GLCONTEXT
 #include <celengine/glcontext.h>
 #endif
-#include "celestiacore.h"
-#include "imagecapture.h"
-#ifdef CELX
-#include "celx_internal.h"
-#endif
+#include <celestia/celestiacore.h>
 #include <celengine/multitexture.h>
+#include <celutil/filetype.h>
 #include <celutil/util.h>
 #include <celmath/mathlib.h>
 #include <iostream>
@@ -642,30 +639,12 @@ CommandCapture::CommandCapture(std::string _type,
 
 void CommandCapture::process(ExecutionEnvironment& env)
 {
-#ifndef __APPLE__
-    const Renderer* r = env.getRenderer();
-    if (r == nullptr)
-        return;
-
-    // Get the dimensions of the current viewport
-    array<int, 4> viewport;
-    r->getScreenSize(viewport);
-
-    if (compareIgnoringCase(type, "jpeg") == 0)
-    {
-        CaptureGLBufferToJPEG(filename,
-                              viewport[0], viewport[1],
-                              viewport[2], viewport[3],
-                              r);
-    }
-    else if (compareIgnoringCase(type, "png") == 0)
-    {
-        CaptureGLBufferToPNG(filename,
-                             viewport[0], viewport[1],
-                             viewport[2], viewport[3],
-                             r);
-    }
-#endif
+    ContentType _type = Content_Unknown;
+    if (type == "jpeg" || type == "jpg")
+        _type = Content_JPEG;
+    else if (type == "png")
+        _type = Content_PNG;
+    env.getCelestiaCore()->saveScreenShot(filename, _type);
 }
 
 
@@ -723,18 +702,14 @@ CommandSplitView::CommandSplitView(unsigned int _view, string _splitType, double
 
 void CommandSplitView::process(ExecutionEnvironment& env)
 {
-#ifdef CELX // because of getObservers
-    vector<Observer*> observer_list;
-    getObservers(env.getCelestiaCore(), observer_list);
-
+    vector<Observer*> observer_list = env.getCelestiaCore()->getObservers();
     if (view >= 1 && view <= observer_list.size())
     {
         Observer* obs = observer_list[view - 1];
-        View* view = getViewByObserver(env.getCelestiaCore(), obs);
+        View* view = env.getCelestiaCore()->getViewByObserver(obs);
         View::Type type = (compareIgnoringCase(splitType, "h") == 0) ? View::HorizontalSplit : View::VerticalSplit;
         env.getCelestiaCore()->splitView(type, view, (float)splitPos);
     }
-#endif
 }
 
 
@@ -748,17 +723,14 @@ CommandDeleteView::CommandDeleteView(unsigned int _view) :
 
 void CommandDeleteView::process(ExecutionEnvironment& env)
 {
-#ifdef CELX
-    vector<Observer*> observer_list;
-    getObservers(env.getCelestiaCore(), observer_list);
+    vector<Observer*> observer_list = env.getCelestiaCore()->getObservers();
 
     if (view >= 1 && view <= observer_list.size())
     {
         Observer* obs = observer_list[view - 1];
-        View* view = getViewByObserver(env.getCelestiaCore(), obs);
+        View* view = env.getCelestiaCore()->getViewByObserver(obs);
         env.getCelestiaCore()->deleteView(view);
     }
-#endif
 }
 
 
@@ -767,10 +739,8 @@ void CommandDeleteView::process(ExecutionEnvironment& env)
 
 void CommandSingleView::process(ExecutionEnvironment& env)
 {
-#ifdef CELX
-    View* view = getViewByObserver(env.getCelestiaCore(), env.getSimulation()->getActiveObserver());
+    View* view = env.getCelestiaCore()->getViewByObserver(env.getSimulation()->getActiveObserver());
     env.getCelestiaCore()->singleView(view);
-#endif
 }
 
 
@@ -784,17 +754,14 @@ CommandSetActiveView::CommandSetActiveView(unsigned int _view) :
 
 void CommandSetActiveView::process(ExecutionEnvironment& env)
 {
-#ifdef CELX
-    vector<Observer*> observer_list;
-    getObservers(env.getCelestiaCore(), observer_list);
+    vector<Observer*> observer_list = env.getCelestiaCore()->getObservers();
 
     if (view >= 1 && view <= observer_list.size())
     {
         Observer* obs = observer_list[view - 1];
-        View* view = getViewByObserver(env.getCelestiaCore(), obs);
+        View* view = env.getCelestiaCore()->getViewByObserver(obs);
         env.getCelestiaCore()->setActiveView(view);
     }
-#endif
 }
 
 
@@ -842,18 +809,17 @@ CommandSetLineColor::CommandSetLineColor(string _item, Color _color) :
 {
 }
 
-void CommandSetLineColor::process(ExecutionEnvironment& /* env */)
+void CommandSetLineColor::process(ExecutionEnvironment& env)
 {
-#ifdef CELX
-    if (CelxLua::LineColorMap.count(item) == 0)
+    auto &LineColorMap = env.getCelestiaCore()->scriptMaps()->LineColorMap;
+    if (LineColorMap.count(item) == 0)
     {
         cerr << "Unknown line style: " << item << "\n";
     }
     else
     {
-        *CelxLua::LineColorMap[item] = color;
+        *LineColorMap[item] = color;
     }
-#endif
 }
 
 
@@ -866,18 +832,17 @@ CommandSetLabelColor::CommandSetLabelColor(string _item, Color _color) :
 {
 }
 
-void CommandSetLabelColor::process(ExecutionEnvironment& /* env */)
+void CommandSetLabelColor::process(ExecutionEnvironment& env)
 {
-#ifdef CELX
-    if (CelxLua::LabelColorMap.count(item) == 0)
+    auto &LabelColorMap = env.getCelestiaCore()->scriptMaps()->LabelColorMap;
+    if (LabelColorMap.count(item) == 0)
     {
         cerr << "Unknown label style: " << item << "\n";
     }
     else
     {
-        *CelxLua::LabelColorMap[item] = color;
+        *LabelColorMap[item] = color;
     }
-#endif
 }
 
 
@@ -952,21 +917,30 @@ double RepeatCommand::getDuration() const
 }
 
 // ScriptImage command
-CommandScriptImage::CommandScriptImage(float _duration, float _xoffset,
-                                       float _yoffset, float _alpha,
-                                       std::string _filename, bool _fitscreen) :
+CommandScriptImage::CommandScriptImage(float _duration, float _fadeafter,
+                                       float _xoffset, float _yoffset,
+                                       fs::path _filename,
+                                       bool _fitscreen,
+                                       array<Color,4> &_colors) :
     duration(_duration),
+    fadeafter(_fadeafter),
     xoffset(_xoffset),
     yoffset(_yoffset),
-    alpha(_alpha),
     filename(std::move(_filename)),
     fitscreen(_fitscreen)
 {
+    copy(_colors.begin(), _colors.end(), colors.begin());
 }
 
 void CommandScriptImage::process(ExecutionEnvironment& env)
 {
-    env.getCelestiaCore()->setScriptImage(duration, xoffset, yoffset, alpha, filename, fitscreen);
+    auto image = unique_ptr<OverlayImage>(new OverlayImage(filename, env.getRenderer()));
+    image->setDuration(duration);
+    image->setFadeAfter(fadeafter);
+    image->setOffset(xoffset, yoffset);
+    image->setColor(colors);
+    image->fitScreen(fitscreen);
+    env.getCelestiaCore()->setScriptImage(std::move(image));
 }
 
 // Verbosity command

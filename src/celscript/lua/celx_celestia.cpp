@@ -25,11 +25,13 @@
 #include "celx_rotation.h"
 #include "celx_vector.h"
 #include "celx_category.h"
-#include "url.h"
-#include "imagecapture.h"
-#include "celestiacore.h"
+#include <celestia/url.h>
+#include <celestia/celestiacore.h>
+#include <celestia/view.h>
+#include <celscript/common/scriptmaps.h>
 
 using namespace Eigen;
+using namespace celestia::scripts;
 
 extern const char* KbdCallback;
 extern const char* CleanupCallback;
@@ -158,13 +160,14 @@ static int celestia_show(lua_State* l)
 
     int argc = lua_gettop(l);
     uint64_t flags = 0;
+    auto &RenderFlagMap = appCore->scriptMaps()->RenderFlagMap;
     for (int i = 2; i <= argc; i++)
     {
         string renderFlag = Celx_SafeGetString(l, i, AllErrors, "Arguments to celestia:show() must be strings");
         if (renderFlag == "lightdelay")
             appCore->setLightDelayActive(true);
-        else if (CelxLua::RenderFlagMap.count(renderFlag) > 0)
-            flags |= CelxLua::RenderFlagMap[renderFlag];
+        else if (RenderFlagMap.count(renderFlag) > 0)
+            flags |= RenderFlagMap[renderFlag];
     }
 
     Renderer* r = appCore->getRenderer();
@@ -181,13 +184,14 @@ static int celestia_hide(lua_State* l)
 
     int argc = lua_gettop(l);
     uint64_t flags = 0;
+    auto &RenderFlagMap = appCore->scriptMaps()->RenderFlagMap;
     for (int i = 2; i <= argc; i++)
     {
         string renderFlag = Celx_SafeGetString(l, i, AllErrors, "Arguments to celestia:hide() must be strings");
         if (renderFlag == "lightdelay")
             appCore->setLightDelayActive(false);
-        else if (CelxLua::RenderFlagMap.count(renderFlag) > 0)
-            flags |= CelxLua::RenderFlagMap[renderFlag];
+        else if (RenderFlagMap.count(renderFlag) > 0)
+            flags |= RenderFlagMap[renderFlag];
     }
 
     Renderer* r = appCore->getRenderer();
@@ -235,9 +239,9 @@ static int celestia_setrenderflags(lua_State* l)
         {
             appCore->setLightDelayActive(value);
         }
-        else if (CelxLua::RenderFlagMap.count(key) > 0)
+        else if (appCore->scriptMaps()->RenderFlagMap.count(key) > 0)
         {
-            uint64_t flag = CelxLua::RenderFlagMap[key];
+            uint64_t flag = appCore->scriptMaps()->RenderFlagMap[key];
             if (value)
                 renderFlags |= flag;
             else
@@ -261,7 +265,7 @@ static int celestia_getrenderflags(lua_State* l)
     CelestiaCore* appCore = this_celestia(l);
     lua_newtable(l);
     const uint64_t renderFlags = appCore->getRenderer()->getRenderFlags();
-    for (const auto& rfm : CelxLua::RenderFlagMap)
+    for (const auto& rfm : appCore->scriptMaps()->RenderFlagMap)
     {
         string key = rfm.first;
         lua_pushstring(l, key.c_str());
@@ -282,7 +286,7 @@ int celestia_getscreendimension(lua_State* l)
     // Get the dimensions of the current viewport
     int w, h;
     CelestiaCore* appCore = to_celestia(l, 1);
-    appCore->getRenderer()->getScreenSize(nullptr, nullptr, &w, &h);
+    appCore->getRenderer()->getViewport(nullptr, nullptr, &w, &h);
     lua_pushnumber(l, w);
     lua_pushnumber(l, h);
     return 2;
@@ -295,11 +299,12 @@ static int celestia_showlabel(lua_State* l)
 
     int argc = lua_gettop(l);
     int flags = 0;
+    auto &LabelFlagMap = appCore->scriptMaps()->LabelFlagMap;
     for (int i = 2; i <= argc; i++)
     {
         string labelFlag = Celx_SafeGetString(l, i, AllErrors, "Arguments to celestia:showlabel() must be strings");
-        if (CelxLua::LabelFlagMap.count(labelFlag) > 0)
-            flags |= CelxLua::LabelFlagMap[labelFlag];
+        if (LabelFlagMap.count(labelFlag) > 0)
+            flags |= LabelFlagMap[labelFlag];
     }
 
     Renderer* r = appCore->getRenderer();
@@ -316,11 +321,12 @@ static int celestia_hidelabel(lua_State* l)
 
     int argc = lua_gettop(l);
     int flags = 0;
+    auto &LabelFlagMap = appCore->scriptMaps()->LabelFlagMap;
     for (int i = 2; i <= argc; i++)
     {
         string labelFlag = Celx_SafeGetString(l, i, AllErrors, "Arguments to celestia:hidelabel() must be strings");
-        if (CelxLua::LabelFlagMap.count(labelFlag) > 0)
-            flags |= CelxLua::LabelFlagMap[labelFlag];
+        if (LabelFlagMap.count(labelFlag) > 0)
+            flags |= LabelFlagMap[labelFlag];
     }
 
     Renderer* r = appCore->getRenderer();
@@ -341,6 +347,7 @@ static int celestia_setlabelflags(lua_State* l)
     }
 
     int labelFlags = appCore->getRenderer()->getLabelMode();
+    auto &LabelFlagMap = appCore->scriptMaps()->LabelFlagMap;
     lua_pushnil(l);
     while (lua_next(l, -2) != 0)
     {
@@ -364,21 +371,17 @@ static int celestia_setlabelflags(lua_State* l)
             Celx_DoError(l, "Values in table-argument to celestia:setlabelflags() must be boolean");
             return 0;
         }
-        if (CelxLua::LabelFlagMap.count(key) == 0)
+        if (LabelFlagMap.count(key) == 0)
         {
             cerr << "Unknown key: " << key << "\n";
         }
         else
         {
-            int flag = CelxLua::LabelFlagMap[key];
+            int flag = LabelFlagMap[key];
             if (value)
-            {
                 labelFlags |= flag;
-            }
             else
-            {
                 labelFlags &= ~flag;
-            }
         }
         lua_pop(l,1);
     }
@@ -394,7 +397,7 @@ static int celestia_getlabelflags(lua_State* l)
     CelestiaCore* appCore = this_celestia(l);
     lua_newtable(l);
     const int labelFlags = appCore->getRenderer()->getLabelMode();
-    for (const auto& lfm : CelxLua::LabelFlagMap)
+    for (const auto& lfm : appCore->scriptMaps()->LabelFlagMap)
     {
         string key = lfm.first;
         lua_pushstring(l, key.c_str());
@@ -416,6 +419,7 @@ static int celestia_setorbitflags(lua_State* l)
 
     int orbitFlags = appCore->getRenderer()->getOrbitMask();
     lua_pushnil(l);
+    auto &BodyTypeMap = appCore->scriptMaps()->BodyTypeMap;
     while (lua_next(l, -2) != 0)
     {
         string key;
@@ -438,21 +442,17 @@ static int celestia_setorbitflags(lua_State* l)
             Celx_DoError(l, "Values in table-argument to celestia:setorbitflags() must be boolean");
             return 0;
         }
-        if (CelxLua::BodyTypeMap.count(key) == 0)
+        if (BodyTypeMap.count(key) == 0)
         {
             cerr << "Unknown key: " << key << "\n";
         }
         else
         {
-            int flag = CelxLua::BodyTypeMap[key];
+            int flag = BodyTypeMap[key];
             if (value)
-            {
                 orbitFlags |= flag;
-            }
             else
-            {
                 orbitFlags &= ~flag;
-            }
         }
         lua_pop(l,1);
     }
@@ -466,7 +466,7 @@ static int celestia_getorbitflags(lua_State* l)
     CelestiaCore* appCore = this_celestia(l);
     lua_newtable(l);
     const int orbitFlags = appCore->getRenderer()->getOrbitMask();
-    for (const auto& btm : CelxLua::BodyTypeMap)
+    for (const auto& btm : appCore->scriptMaps()->BodyTypeMap)
     {
         string key = btm.first;
         lua_pushstring(l, key.c_str());
@@ -625,6 +625,7 @@ static int celestia_setoverlayelements(lua_State* l)
 
     int overlayElements = appCore->getOverlayElements();
     lua_pushnil(l);
+    auto &OverlayElementMap = appCore->scriptMaps()->OverlayElementMap;
     while (lua_next(l, -2) != 0)
     {
         string key;
@@ -647,21 +648,17 @@ static int celestia_setoverlayelements(lua_State* l)
             Celx_DoError(l, "Values in table-argument to celestia:setoverlayelements() must be boolean");
             return 0;
         }
-        if (CelxLua::OverlayElementMap.count(key) == 0)
+        if (OverlayElementMap.count(key) == 0)
         {
             cerr << "Unknown key: " << key << "\n";
         }
         else
         {
-            int element = CelxLua::OverlayElementMap[key];
+            int element = OverlayElementMap[key];
             if (value)
-            {
                 overlayElements |= element;
-            }
             else
-            {
                 overlayElements &= ~element;
-            }
         }
         lua_pop(l,1);
     }
@@ -675,7 +672,7 @@ static int celestia_getoverlayelements(lua_State* l)
     CelestiaCore* appCore = this_celestia(l);
     lua_newtable(l);
     const int overlayElements = appCore->getOverlayElements();
-    for (const auto& oem : CelxLua::OverlayElementMap)
+    for (const auto& oem : appCore->scriptMaps()->OverlayElementMap)
     {
         string key = oem.first;
         lua_pushstring(l, key.c_str());
@@ -731,13 +728,14 @@ static int celestia_setlabelcolor(lua_State* l)
     Color* color = nullptr;
     string key;
     key = lua_tostring(l, 2);
-    if (CelxLua::LabelColorMap.count(key) == 0)
+    auto &LabelColorMap = this_celestia(l)->scriptMaps()->LabelColorMap;
+    if (LabelColorMap.count(key) == 0)
     {
         cerr << "Unknown label style: " << key << "\n";
     }
     else
     {
-        color = CelxLua::LabelColorMap[key];
+        color = LabelColorMap[key];
     }
 
     double red     = Celx_SafeGetNumber(l, 3, AllErrors, "setlabelcolor: color values must be numbers");
@@ -762,13 +760,14 @@ static int celestia_getlabelcolor(lua_State* l)
     string key = Celx_SafeGetString(l, 2, AllErrors, "Argument to celestia:getlabelcolor() must be a string");
 
     Color* labelColor = nullptr;
-    if (CelxLua::LabelColorMap.count(key) == 0)
+    auto &LabelColorMap = this_celestia(l)->scriptMaps()->LabelColorMap;
+    if (LabelColorMap.count(key) == 0)
     {
         cerr << "Unknown label style: " << key << "\n";
         return 0;
     }
 
-    labelColor = CelxLua::LabelColorMap[key];
+    labelColor = LabelColorMap[key];
     lua_pushnumber(l, labelColor->red());
     lua_pushnumber(l, labelColor->green());
     lua_pushnumber(l, labelColor->blue());
@@ -789,13 +788,14 @@ static int celestia_setlinecolor(lua_State* l)
     Color* color = nullptr;
     string key;
     key = lua_tostring(l, 2);
-    if (CelxLua::LineColorMap.count(key) == 0)
+    auto &LineColorMap = this_celestia(l)->scriptMaps()->LineColorMap;
+    if (LineColorMap.count(key) == 0)
     {
         cerr << "Unknown line style: " << key << "\n";
     }
     else
     {
-        color = CelxLua::LineColorMap[key];
+        color = LineColorMap[key];
     }
 
     double red     = Celx_SafeGetNumber(l, 3, AllErrors, "setlinecolor: color values must be numbers");
@@ -819,14 +819,14 @@ static int celestia_getlinecolor(lua_State* l)
     Celx_CheckArgs(l, 2, 2, "One argument expected for celestia:getlinecolor()");
     string key = Celx_SafeGetString(l, 2, AllErrors, "Argument to celestia:getlinecolor() must be a string");
 
-    if (CelxLua::LineColorMap.count(key) == 0)
+    auto &LineColorMap = this_celestia(l)->scriptMaps()->LineColorMap;
+    if (LineColorMap.count(key) == 0)
     {
         cerr << "Unknown line style: " << key << "\n";
         return 0;
     }
 
-    Color* lineColor = nullptr;
-    lineColor = CelxLua::LineColorMap[key];
+    Color* lineColor = LineColorMap[key];
     lua_pushnumber(l, lineColor->red());
     lua_pushnumber(l, lineColor->green());
     lua_pushnumber(l, lineColor->blue());
@@ -1914,30 +1914,9 @@ static int celestia_takescreenshot(lua_State* l)
     string filenamestem;
     filenamestem = fmt::sprintf("screenshot-%s%06i", fileid, luastate->screenshotCount);
 
-    // Get the dimensions of the current viewport
-    array<GLint, 4> viewport;
-    appCore->getRenderer()->getScreenSize(viewport);
-
-
     fs::path path = appCore->getConfig()->scriptScreenshotDirectory;
-#ifndef __APPLE__
-    if (strncmp(filetype, "jpg", 3) == 0)
-    {
-        fs::path filepath = path / (filenamestem + ".jpg");
-        success = CaptureGLBufferToJPEG(filepath,
-                                       viewport[0], viewport[1],
-                                       viewport[2], viewport[3],
-                                       appCore->getRenderer());
-    }
-    else
-    {
-        fs::path filepath = path / (filenamestem + ".png");
-        success = CaptureGLBufferToPNG(filepath,
-                                       viewport[0], viewport[1],
-                                       viewport[2], viewport[3],
-                                       appCore->getRenderer());
-    }
-#endif
+    fs::path filepath = path / fmt::sprintf("%s.%s", filenamestem, filetype);
+    success = appCore->saveScreenShot(filepath);
     lua_pushboolean(l, success);
 
     // no matter how long it really took, make it look like 0.1s to timeout check:
@@ -2081,7 +2060,14 @@ static int celestia_overlay(lua_State* l)
     else
         fitscreen = (bool) Celx_SafeGetNumber(l, 7, WrongType, "Sixth argument to celestia:overlay must be a number or a boolean(fitscreen)", 0);
 
-    appCore->setScriptImage(duration, xoffset, yoffset, alpha, filename, fitscreen);
+    auto image = unique_ptr<OverlayImage>(new OverlayImage(filename, appCore->getRenderer()));
+    image->setDuration(duration);
+    image->setFadeAfter(duration); // FIXME
+    image->setOffset(xoffset, yoffset);
+    image->setColor({Color::White, alpha}); // FIXME
+    image->fitScreen(fitscreen);
+
+    appCore->setScriptImage(std::move(image));
 
     return 0;
 }
@@ -2403,7 +2389,7 @@ static int celestia_newcategory(lua_State *l)
 static int celestia_findcategory(lua_State *l)
 {
     CelxLua celx(l);
-    
+
     const char *emsg = "Argument of celestia:fndcategory must be a string.";
     const char *name = celx.safeGetString(2, AllErrors, emsg);
     if (name == nullptr)

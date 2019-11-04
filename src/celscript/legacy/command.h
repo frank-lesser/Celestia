@@ -12,10 +12,11 @@
 
 #define MAX_CONSTELLATIONS 100
 
+#include <array>
 #include <iostream>
-#include <celengine/execenv.h>
 #include <celengine/astro.h>
 #include <celutil/color.h>
+#include "execenv.h"
 
 
 class Command
@@ -716,17 +717,17 @@ class RepeatCommand : public Command
 class CommandScriptImage : public InstantaneousCommand
 {
  public:
-    CommandScriptImage(float _duration, float _xoffset, float _yoffset,
-                       float _alpha, std::string, bool _fitscreen);
+    CommandScriptImage(float, float, float, float, fs::path, bool, std::array<Color, 4>&);
     void process(ExecutionEnvironment&);
 
  private:
-    double duration;
+    float duration;
+    float fadeafter;
     float xoffset;
     float yoffset;
-    float alpha;
-    std::string filename;
+    fs::path filename;
     int fitscreen;
+    std::array<Color, 4> colors;
 };
 
 class CommandVerbosity : public InstantaneousCommand

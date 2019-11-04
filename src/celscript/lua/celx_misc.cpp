@@ -1,11 +1,20 @@
+// celx_misc.cpp
+//
+// Copyright (C) 2019, the Celestia Development Team
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
 
 #include <celutil/debug.h>
 #include "celx_misc.h"
 #include "celx_internal.h"
-#include "cmdparser.h"
-#include <celengine/execenv.h>
-#include "execution.h"
-#include "celestiacore.h"
+#include <celscript/legacy/cmdparser.h>
+#include <celscript/legacy/execution.h>
+#include <celestia/celestiacore.h>
+
+using namespace celestia::scripts;
 
 LuaState *getLuaStateObject(lua_State*);
 
@@ -16,7 +25,7 @@ class CelScriptWrapper : public ExecutionEnvironment
     CelScriptWrapper(CelestiaCore& appCore, istream& scriptfile):
         core(appCore)
     {
-        CommandParser parser(scriptfile);
+        CommandParser parser(scriptfile, appCore.scriptMaps());
         cmdSequence = parser.parse();
         if (cmdSequence != nullptr)
         {

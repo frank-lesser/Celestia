@@ -10,49 +10,40 @@
 // of the License, or (at your option) any later version.
 
 #include <config.h>
-
-#include "cmdparser.h"
-#ifdef USE_GLCONTEXT
-#include <celengine/glcontext.h>
-#endif
+#include <algorithm>
+#include <sstream>
+#include <Eigen/Geometry>
 #include <celutil/util.h>
 #include <celutil/debug.h>
 #include <celmath/mathlib.h>
 #include <celengine/astro.h>
-#ifdef CELX
-#include "celx.h"
-#include "celx_internal.h"
-#endif
 #include <celengine/render.h>
-#include <algorithm>
-#include <Eigen/Geometry>
-
-// Older gcc versions used <strstream> instead of <sstream>.
-// This has been corrected in GCC 3.2, but name clashing must
-// be avoided
-#ifdef __GNUC__
-#undef min
-#undef max
+#ifdef USE_GLCONTEXT
+#include <celengine/glcontext.h>
 #endif
-#include <sstream>
+#include <celscript/common/scriptmaps.h>
+#include "cmdparser.h"
 
 using namespace std;
 using namespace celmath;
+using namespace celestia::scripts;
 
 
-static uint64_t parseRenderFlags(string /*s*/);
-static int parseLabelFlags(string /*s*/);
-static int parseOrbitFlags(string /*s*/);
-static int parseConstellations(CommandConstellations* cmd, string s, int act);
-int parseConstellationColor(CommandConstellationColor* cmd, string s, Eigen::Vector3d *col, int act);
+static uint64_t parseRenderFlags(const string&, const FlagMap64&);
+static int parseLabelFlags(const string&, const FlagMap&);
+static int parseOrbitFlags(const string&, const FlagMap&);
+static int parseConstellations(CommandConstellations* cmd, const string &s, int act);
+int parseConstellationColor(CommandConstellationColor* cmd, const string &s, Eigen::Vector3d *col, int act);
 
-CommandParser::CommandParser(istream& in)
+CommandParser::CommandParser(istream& in, const shared_ptr<ScriptMaps> &sm) :
+    scriptMaps(sm)
 {
     tokenizer = new Tokenizer(&in);
     parser = new Parser(tokenizer);
 }
 
-CommandParser::CommandParser(Tokenizer& tok)
+CommandParser::CommandParser(Tokenizer& tok, const shared_ptr<ScriptMaps> &sm) :
+    scriptMaps(sm)
 {
     tokenizer = &tok;
     parser = new Parser(tokenizer);
@@ -519,9 +510,9 @@ Command* CommandParser::parseCommand()
         string s;
 
         if (paramList->getString("set", s))
-            setFlags = parseRenderFlags(s);
+            setFlags = parseRenderFlags(s, scriptMaps->RenderFlagMap);
         if (paramList->getString("clear", s))
-            clearFlags = parseRenderFlags(s);
+            clearFlags = parseRenderFlags(s, scriptMaps->RenderFlagMap);
 
         cmd = new CommandRenderFlags(setFlags, clearFlags);
     }
@@ -532,9 +523,9 @@ Command* CommandParser::parseCommand()
         string s;
 
         if (paramList->getString("set", s))
-            setFlags = parseLabelFlags(s);
+            setFlags = parseLabelFlags(s, scriptMaps->LabelFlagMap);
         if (paramList->getString("clear", s))
-            clearFlags = parseLabelFlags(s);
+            clearFlags = parseLabelFlags(s, scriptMaps->LabelFlagMap);
 
         cmd = new CommandLabels(setFlags, clearFlags);
     }
@@ -545,9 +536,9 @@ Command* CommandParser::parseCommand()
         string s;
 
         if (paramList->getString("set", s))
-            setFlags = parseOrbitFlags(s);
+            setFlags = parseOrbitFlags(s, scriptMaps->OrbitVisibilityMap);
         if (paramList->getString("clear", s))
-            clearFlags = parseOrbitFlags(s);
+            clearFlags = parseOrbitFlags(s, scriptMaps->OrbitVisibilityMap);
 
         cmd = new CommandOrbitFlags(setFlags, clearFlags);
     }
@@ -773,39 +764,57 @@ Command* CommandParser::parseCommand()
     }
     else if (commandName == "overlay")
     {
-        float duration;
-        float xoffset;
-        float yoffset;
-        float alpha;
+        float duration = 3.0f;
+        float fadeafter;
+        float xoffset = 0.0f;
+        float yoffset = 0.0f;
+        float alpha = 1.0f;
+        bool hasAlpha = true;
         string filename;
-        bool fitscreen;
+        bool fitscreen = false;
+        Color color(Color::White);
 
-        if(!paramList->getNumber("duration", duration))
-            duration = 3;
-        if(!paramList->getNumber("xoffset", xoffset))
-            xoffset = 0.0;
-        if(!paramList->getNumber("yoffset", yoffset))
-            yoffset = 0.0;
-        if(!paramList->getNumber("alpha", alpha))
-            alpha = 1;
-        if(!paramList->getString("filename", filename))
-            filename = "";
-        if(!paramList->getBoolean("fitscreen", fitscreen))
+        paramList->getNumber("duration", duration);
+        paramList->getNumber("xoffset", xoffset);
+        paramList->getNumber("yoffset", yoffset);
+        if (paramList->getNumber("alpha", alpha))
+            hasAlpha = true;
+        paramList->getString("filename", filename);
+
+        if (!paramList->getBoolean("fitscreen", fitscreen))
         {
-          int f;
-          if(!paramList->getNumber("fitscreen", f))
-             fitscreen = false;
-          else
-            fitscreen = (bool) f;
+            int f;
+            // backward compatibility with celestia ed implementation
+            if (paramList->getNumber("fitscreen", f))
+                fitscreen = (bool) f;
         }
 
-        cmd = new CommandScriptImage(duration, xoffset, yoffset, alpha, filename, fitscreen);
+        array<Color, 4> colors;
+        paramList->getColor("color", color);
+        colors.fill(hasAlpha ? Color(color, alpha) : color);
+        if (paramList->getColor("colortop", color))
+            colors[0] = colors[1] = hasAlpha ? Color(color, alpha) : color;
+        if (paramList->getColor("colorbottom", color))
+            colors[2] = colors[3] = hasAlpha ? Color(color, alpha) : color;
+        if (paramList->getColor("colortopleft", color))
+            colors[0] = hasAlpha ? Color(color, alpha) : color;
+        if (paramList->getColor("colortopright", color))
+            colors[1] = hasAlpha ? Color(color, alpha) : color;
+        if (paramList->getColor("colorbottomright", color))
+            colors[2] = hasAlpha ? Color(color, alpha) : color;
+        if (paramList->getColor("colorbottomleft", color))
+            colors[3] = hasAlpha ? Color(color, alpha) : color;
+
+        if (!paramList->getNumber("fadeafter", fadeafter))
+            fadeafter = duration;
+
+        cmd = new CommandScriptImage(duration, fadeafter, xoffset, yoffset, filename, fitscreen, colors);
     }
     else if (commandName == "verbosity")
     {
         int level;
 
-        if(!paramList->getNumber("level", level))
+        if (!paramList->getNumber("level", level))
             level = 2;
 
         cmd = new CommandVerbosity(level);
@@ -846,14 +855,13 @@ Command* CommandParser::parseCommand()
 }
 
 
-uint64_t parseRenderFlags(string s)
+uint64_t parseRenderFlags(const string &s, const FlagMap64& RenderFlagMap)
 {
     istringstream in(s);
 
     Tokenizer tokenizer(&in);
     uint64_t flags = 0;
 
-#ifdef CELX
     Tokenizer::TokenType ttype = tokenizer.nextToken();
     while (ttype != Tokenizer::TokenEnd)
     {
@@ -861,30 +869,28 @@ uint64_t parseRenderFlags(string s)
         {
             string name = tokenizer.getNameValue();
 
-            if (CelxLua::RenderFlagMap.count(name) == 0)
+            if (RenderFlagMap.count(name) == 0)
                 cerr << "Unknown render flag: " << name << "\n";
             else
-                flags |= CelxLua::RenderFlagMap[name];
+                flags |= RenderFlagMap.at(name);
 
             ttype = tokenizer.nextToken();
             if (ttype == Tokenizer::TokenBar)
                 ttype = tokenizer.nextToken();
         }
     }
-#endif
 
     return flags;
 }
 
 
-int parseLabelFlags(string s)
+int parseLabelFlags(const string &s, const FlagMap &LabelFlagMap)
 {
     istringstream in(s);
 
     Tokenizer tokenizer(&in);
     int flags = 0;
 
-#ifdef CELX
     Tokenizer::TokenType ttype = tokenizer.nextToken();
     while (ttype != Tokenizer::TokenEnd)
     {
@@ -892,30 +898,28 @@ int parseLabelFlags(string s)
         {
             string name = tokenizer.getNameValue();
 
-            if (CelxLua::LabelFlagMap.count(name) == 0)
+            if (LabelFlagMap.count(name) == 0)
                 cerr << "Unknown label flag: " << name << "\n";
             else
-                flags |= CelxLua::LabelFlagMap[name];
+                flags |= LabelFlagMap.at(name);
 
             ttype = tokenizer.nextToken();
             if (ttype == Tokenizer::TokenBar)
                 ttype = tokenizer.nextToken();
         }
     }
-#endif
 
     return flags;
 }
 
 
-int parseOrbitFlags(string s)
+int parseOrbitFlags(const string &s, const FlagMap &BodyTypeMap)
 {
     istringstream in(s);
 
     Tokenizer tokenizer(&in);
     int flags = 0;
 
-#ifdef CELX
     Tokenizer::TokenType ttype = tokenizer.nextToken();
     while (ttype != Tokenizer::TokenEnd)
     {
@@ -924,23 +928,22 @@ int parseOrbitFlags(string s)
             string name = tokenizer.getNameValue();
             name[0] = toupper(name[0]);
 
-            if (CelxLua::BodyTypeMap.count(name) == 0)
+            if (BodyTypeMap.count(name) == 0)
                 cerr << "Unknown orbit flag: " << name << "\n";
             else
-                flags |= CelxLua::BodyTypeMap[name];
+                flags |= BodyTypeMap.at(name);
 
             ttype = tokenizer.nextToken();
             if (ttype == Tokenizer::TokenBar)
                 ttype = tokenizer.nextToken();
         }
     }
-#endif
 
     return flags;
 }
 
 
-int parseConstellations(CommandConstellations* cmd, string s, int act)
+int parseConstellations(CommandConstellations* cmd, const string &s, int act)
 {
     istringstream in(s);
 
@@ -975,7 +978,7 @@ int parseConstellations(CommandConstellations* cmd, string s, int act)
 }
 
 
-int parseConstellationColor(CommandConstellationColor* cmd, string s, Eigen::Vector3d *col, int act)
+int parseConstellationColor(CommandConstellationColor* cmd, const string &s, Eigen::Vector3d *col, int act)
 {
     istringstream in(s);
 

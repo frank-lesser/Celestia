@@ -3,16 +3,10 @@ set(CELESTIA_SOURCES
   celestiacore.h
   configfile.cpp
   configfile.h
-  cmdparser.cpp
-  cmdparser.h
-  command.cpp
-  command.h
   destination.cpp
   destination.h
   eclipsefinder.cpp
   eclipsefinder.h
-  execution.cpp
-  execution.h
   favorites.cpp
   favorites.h
   helper.cpp
@@ -24,39 +18,9 @@ set(CELESTIA_SOURCES
   scriptmenu.h
   url.cpp
   url.h
+  view.cpp
+  view.h
 )
-
-set(CELX_SOURCES
-  celx_category.cpp
-  celx_category.h
-  celx_celestia.cpp
-  celx_celestia.h
-  celx.cpp
-  celx_frame.cpp
-  celx_frame.h
-  celx_gl.cpp
-  celx_gl.h
-  celx.h
-  celx_internal.h
-  celx_misc.cpp
-  celx_misc.h
-  celx_object.cpp
-  celx_object.h
-  celx_observer.cpp
-  celx_observer.h
-  celx_phase.cpp
-  celx_phase.h
-  celx_position.cpp
-  celx_position.h
-  celx_rotation.cpp
-  celx_rotation.h
-  celx_vector.cpp
-  celx_vector.h
-)
-
-if(ENABLE_CELX)
-  list(APPEND CELESTIA_SOURCES ${CELX_SOURCES})
-endif()
 
 if(WIN32)
   list(APPEND CELESTIA_SOURCES
@@ -70,7 +34,12 @@ elseif(_UNIX AND ENABLE_THEORA)
   )
 endif()
 
-add_library(celestia STATIC ${CELESTIA_SOURCES})
+set(SCRIPT_LIBS $<TARGET_OBJECTS:celcommonscript> $<TARGET_OBJECTS:cellegacyscript>)
+if(ENABLE_CELX)
+  set(SCRIPT_LIBS ${SCRIPT_LIBS} $<TARGET_OBJECTS:celluascript>)
+endif()
+
+add_library(celestia STATIC ${CELESTIA_SOURCES} ${SCRIPT_LIBS})
 
 #[[
 add_library(celestia SHARED ${CELESTIA_SOURCES})

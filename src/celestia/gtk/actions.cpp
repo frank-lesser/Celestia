@@ -23,10 +23,8 @@
 #include <celengine/body.h>
 
 #include <celengine/simulation.h>
-#include <celestia/cmdparser.h>
 #include <celengine/render.h>
 #include <celestia/celestiacore.h>
-#include <celestia/imagecapture.h>
 #include <celestia/url.h>
 #include <celutil/filetype.h>
 #ifdef THEORA
@@ -1060,61 +1058,7 @@ static void openScript(const char* filename, AppData* app)
     {
         /* If you got here, a path and file has been specified.
          * filename contains full path to specified file. */
-        ContentType type = DetermineFileType(filename);
-
-        if (type == Content_CelestiaScript)
-        {
-            app->core->runScript(filename);
-        }
-        else if (type == Content_CelestiaLegacyScript)
-        {
-            ifstream scriptfile(filename);
-            if (!scriptfile.good())
-            {
-                GtkWidget* errBox = gtk_message_dialog_new(GTK_WINDOW(app->mainWindow),
-                                                           GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                           GTK_MESSAGE_ERROR,
-                                                           GTK_BUTTONS_OK,
-                                                           "Error opening script file.");
-                gtk_dialog_run(GTK_DIALOG(errBox));
-                gtk_widget_destroy(errBox);
-            }
-            else
-            {
-                CommandParser parser(scriptfile);
-                CommandSequence* script = parser.parse();
-                if (script == NULL)
-                {
-                    const vector<string>* errors = parser.getErrors();
-                    const char* errorMsg = "";
-                    if (errors->size() > 0)
-                        errorMsg = (*errors)[0].c_str();
-                    GtkWidget* errBox = gtk_message_dialog_new(GTK_WINDOW(app->mainWindow),
-                                                               GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                               GTK_MESSAGE_ERROR,
-                                                               GTK_BUTTONS_OK, "%s",
-                                                               errorMsg);
-                    gtk_dialog_run(GTK_DIALOG(errBox));
-                    gtk_widget_destroy(errBox);
-                }
-                else
-                {
-                    /* Cancel any running script */
-                    app->core->cancelScript();
-                    app->core->runScript(script);
-                }
-            }
-        }
-        else
-        {
-            GtkWidget* errBox = gtk_message_dialog_new(GTK_WINDOW(app->mainWindow),
-                                                       GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                       GTK_MESSAGE_ERROR,
-                                                       GTK_BUTTONS_OK,
-                                                       "Bad File Type. Use *.(cel|celx|clx).");
-            gtk_dialog_run(GTK_DIALOG(errBox));
-            gtk_widget_destroy(errBox);
-        }
+        app->core->runScript(filename);
     }
 }
 
@@ -1122,50 +1066,20 @@ static void openScript(const char* filename, AppData* app)
 /* Image capturing helper called by actionCaptureImage() */
 static void captureImage(const char* filename, AppData* app)
 {
-    /* Get the dimensions of the current viewport */
-    array<int, 4> viewport;
-    app->renderer->getScreenSize(viewport);
-
-    bool success = false;
     ContentType type = DetermineFileType(filename);
-    if (type == Content_Unknown)
+    if (type != Content_JPEG && type != Content_PNG)
     {
         GtkWidget* errBox = gtk_message_dialog_new(GTK_WINDOW(app->mainWindow),
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
                                                    GTK_MESSAGE_ERROR,
                                                    GTK_BUTTONS_OK,
-                                                   "Unable to determine image file type from name, please use a name ending in '.jpg' or '.png'.");
-        gtk_dialog_run(GTK_DIALOG(errBox));
-        gtk_widget_destroy(errBox);
-        return;
-    }
-    else if (type == Content_JPEG)
-    {
-        success = CaptureGLBufferToJPEG(filename,
-                                        viewport[0], viewport[1],
-                                        viewport[2], viewport[3],
-                                        app->renderer);
-    }
-    else if (type == Content_PNG)
-    {
-        success = CaptureGLBufferToPNG(filename,
-                                       viewport[0], viewport[1],
-                                       viewport[2], viewport[3],
-                                       app->renderer);
-    }
-    else
-    {
-        GtkWidget* errBox = gtk_message_dialog_new(GTK_WINDOW(app->mainWindow),
-                                                   GTK_DIALOG_DESTROY_WITH_PARENT,
-                                                   GTK_MESSAGE_ERROR,
-                                                   GTK_BUTTONS_OK,
-                                                   "Currently screen capturing to only JPEG or PNG files is supported.");
+                                                   _("Please use a name ending in '.jpg' or '.png'."));
         gtk_dialog_run(GTK_DIALOG(errBox));
         gtk_widget_destroy(errBox);
         return;
     }
 
-    if (!success)
+    if (!app->core->saveScreenShot(filename))
     {
         GtkWidget* errBox = gtk_message_dialog_new(GTK_WINDOW(app->mainWindow),
                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
@@ -1183,7 +1097,7 @@ static void captureMovie(const char* filename, int aspect, float fps, float qual
 {
     /* Get the dimensions of the current viewport */
     array<int, 4> viewport;
-    app->renderer->getScreenSize(viewport);
+    app->renderer->getViewport(viewport);
 
     MovieCapture* movieCapture = new OggTheoraCapture(app->renderer);
     switch (aspect)
