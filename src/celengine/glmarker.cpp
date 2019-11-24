@@ -10,6 +10,7 @@
 
 #include "marker.h"
 #include <celmath/mathlib.h>
+#include <celutil/util.h>
 #include <GL/glew.h>
 #include <vector>
 #include "render.h"
@@ -130,19 +131,40 @@ static GLfloat DownArrow[DownArrowCount * 2] =
      0.0f,         1.0f
 };
 
-constexpr const int StaticVtxCount = DownArrowOffset + DownArrowCount;
+constexpr const int SelPointerOffset = DownArrowOffset + DownArrowCount;
+constexpr const int SelPointerCount  = 3;
+static GLfloat SelPointer[SelPointerCount * 2] =
+{
+    0.0f,       0.0f,
+   -20.0f,      6.0f,
+   -20.0f,     -6.0f
+};
 
-constexpr const int SmallCircleOffset = DownArrowOffset + DownArrowCount;
+constexpr const int CrosshairOffset = SelPointerOffset + SelPointerCount;
+constexpr const int CrosshairCount  = 3;
+static GLfloat Crosshair[CrosshairCount * 2 ] =
+{
+    0.0f,       0.0f,
+    1.0f,      -1.0f,
+    1.0f,       1.0f
+};
+
+constexpr const int StaticVtxCount = CrosshairOffset + CrosshairCount;
+
+constexpr const int SmallCircleOffset = StaticVtxCount;
 static int SmallCircleCount  = 0;
 static int LargeCircleOffset = 0;
 static int LargeCircleCount  = 0;
+static int EclipticOffset    = 0;
+constexpr const int EclipticCount = 200;
 
 static void initVO(VertexObject& vo)
 {
+    float c, s;
+
     vector<GLfloat> small, large;
     for (int i = 0; i < 360; i += 36)
     {
-        float c, s;
         sincos(degToRad(static_cast<float>(i)), s, c);
         small.push_back(c); small.push_back(s);
         large.push_back(c); large.push_back(s);
@@ -157,8 +179,17 @@ static void initVO(VertexObject& vo)
     LargeCircleCount = large.size() / 2;
     LargeCircleOffset = SmallCircleOffset + SmallCircleCount;
 
+    vector<GLfloat> ecliptic;
+    for (int i = 0; i < EclipticCount; i++)
+    {
+        sincos((float) (2 * i) / (float) EclipticCount * ((float) PI), s, c);
+        ecliptic.push_back(c * 1000.0f);
+        ecliptic.push_back(s * 1000.0f);
+    }
+    EclipticOffset = LargeCircleOffset + LargeCircleCount;
+
 #define VTXTOMEM(a) ((a) * sizeof(GLfloat) * 2)
-    vo.allocate(VTXTOMEM(StaticVtxCount + SmallCircleCount + LargeCircleCount));
+    vo.allocate(VTXTOMEM(StaticVtxCount + SmallCircleCount + LargeCircleCount + EclipticCount));
 
 #define VOSTREAM(a) vo.setBufferData(a, VTXTOMEM(a ## Offset), sizeof(a))
     VOSTREAM(Diamond);
@@ -170,10 +201,13 @@ static void initVO(VertexObject& vo)
     VOSTREAM(LeftArrow);
     VOSTREAM(UpArrow);
     VOSTREAM(DownArrow);
+    VOSTREAM(SelPointer);
+    VOSTREAM(Crosshair);
 #undef VOSTREAM
 
-    vo.setBufferData(small.data(), VTXTOMEM(SmallCircleOffset), small.size() * sizeof(GLfloat));
-    vo.setBufferData(large.data(), VTXTOMEM(LargeCircleOffset), large.size() * sizeof(GLfloat));
+    vo.setBufferData(small.data(), VTXTOMEM(SmallCircleOffset), memsize(small));
+    vo.setBufferData(large.data(), VTXTOMEM(LargeCircleOffset), memsize(large));
+    vo.setBufferData(ecliptic.data(), VTXTOMEM(EclipticOffset), memsize(ecliptic));
 #undef VTXTOMEM
 
     vo.setVertices(2, GL_FLOAT, false, 0, 0);
@@ -181,15 +215,14 @@ static void initVO(VertexObject& vo)
 
 void Renderer::renderMarker(MarkerRepresentation::Symbol symbol, float size, const Color& color)
 {
-    markerVO.bind();
-
-    if (!markerVO.initialized())
-        initVO(markerVO);
-
     assert(shaderManager != nullptr);
     auto* prog = shaderManager->getShader("marker");
     if (prog == nullptr)
         return;
+
+    markerVO.bind();
+    if (!markerVO.initialized())
+        initVO(markerVO);
 
     float s = size / 2.0f;
     prog->use();
@@ -256,6 +289,151 @@ void Renderer::renderMarker(MarkerRepresentation::Symbol symbol, float size, con
         break;
     }
 
+    glUseProgram(0);
+    markerVO.unbind();
+}
+
+/*! Draw an arrow at the view border pointing to an offscreen selection. This method
+ *  should only be called when the selection lies outside the view frustum.
+ */
+void Renderer::renderSelectionPointer(const Observer& observer,
+                                      double now,
+                                      const Frustum& viewFrustum,
+                                      const Selection& sel)
+{
+    constexpr const float cursorDistance = 20.0f;
+    if (sel.empty())
+        return;
+
+    // Get the position of the cursor relative to the eye
+    Vector3d position = sel.getPosition(now).offsetFromKm(observer.getPosition());
+    if (viewFrustum.testSphere(position, sel.radius()) != Frustum::Outside)
+        return;
+
+    assert(shaderManager != nullptr);
+    auto* prog = shaderManager->getShader("selpointer");
+    if (prog == nullptr)
+        return;
+
+    Matrix3f cameraMatrix = observer.getOrientationf().conjugate().toRotationMatrix();
+    const Vector3f u = cameraMatrix.col(0);
+    const Vector3f v = cameraMatrix.col(1);
+    double distance = position.norm();
+    position *= cursorDistance / distance;
+
+#ifdef USE_HDR
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+#endif
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    float vfov = (float) observer.getFOV();
+    float h = tan(vfov / 2);
+    float w = h * getAspectRatio();
+    float diag = sqrt(h * h + w * w);
+
+    Vector3f posf = position.cast<float>() / cursorDistance;
+    float x = u.dot(posf);
+    float y = v.dot(posf);
+    float c, s;
+    sincos(atan2(y, x), s, c);
+
+    float x0 = c * diag;
+    float y0 = s * diag;
+    float t = (std::abs(x0) < w) ? h / abs(y0) : w / abs(x0);
+    x0 *= t;
+    y0 *= t;
+
+    const Vector3f &center = cameraMatrix.col(2);
+    glPushMatrix();
+    glTranslatef(-center.x(), -center.y(), -center.z());
+
+    markerVO.bind();
+    if (!markerVO.initialized())
+        initVO(markerVO);
+    prog->use();
+    prog->vec4Param("color") = Color(SelectionCursorColor, 0.6f).toVector4();
+    prog->floatParam("pixelSize") = pixelSize;
+    prog->floatParam("s") = s;
+    prog->floatParam("c") = c;
+    prog->floatParam("x0") = x0;
+    prog->floatParam("y0") = y0;
+    prog->vec3Param("u") = u;
+    prog->vec3Param("v") = v;
+    markerVO.draw(GL_TRIANGLES, SelPointerCount, SelPointerOffset);
+
+    glUseProgram(0);
+    markerVO.unbind();
+
+    glPopMatrix();
+
+#ifdef USE_HDR
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+#endif
+}
+
+/*! Draw the J2000.0 ecliptic; trivial, since this forms the basis for
+ *  Celestia's coordinate system.
+ */
+void Renderer::renderEclipticLine()
+{
+    if ((renderFlags & ShowEcliptic) == 0)
+        return;
+
+    assert(shaderManager != nullptr);
+    auto* prog = shaderManager->getShader("ecliptic");
+    if (prog == nullptr)
+        return;
+
+    markerVO.bind();
+    if (!markerVO.initialized())
+        initVO(markerVO);
+
+    prog->use();
+    prog->vec4Param("color") = EclipticColor.toVector4();
+    markerVO.draw(GL_LINE_LOOP, EclipticCount, EclipticOffset);
+
+    glUseProgram(0);
+    markerVO.unbind();
+}
+
+void Renderer::renderCrosshair(float selectionSizeInPixels, double tsec, const Color &color)
+{
+    assert(shaderManager != nullptr);
+    auto* prog = shaderManager->getShader("crosshair");
+    if (prog == nullptr)
+        return;
+
+    markerVO.bind();
+    if (!markerVO.initialized())
+        initVO(markerVO);
+
+    const float cursorMinRadius = 6.0f;
+    const float cursorRadiusVariability = 4.0f;
+    const float minCursorWidth = 7.0f;
+    const float cursorPulsePeriod = 1.5f;
+
+    float cursorRadius = selectionSizeInPixels + cursorMinRadius;
+    cursorRadius += cursorRadiusVariability * (float) (0.5 + 0.5 * sin(tsec * 2 * PI / cursorPulsePeriod));
+
+    // Enlarge the size of the cross hair sligtly when the selection
+    // has a large apparent size
+    float cursorGrow = max(1.0f, min(2.5f, (selectionSizeInPixels - 10.0f) / 100.0f));
+
+    prog->use();
+    prog->vec4Param("color") = color.toVector4();
+    prog->floatParam("radius") = cursorRadius;
+    prog->floatParam("width") = minCursorWidth * cursorGrow;
+    prog->floatParam("h") = 2.0f * cursorGrow;
+
+    const unsigned int markCount = 4;
+    for (unsigned int i = 0; i < markCount; i++)
+    {
+        float theta = (float) (PI / 4.0) + (float) i / (float) markCount * (float) (2 * PI);
+        prog->floatParam("angle") = theta;
+        markerVO.draw(GL_TRIANGLES, CrosshairCount, CrosshairOffset);
+    }
     glUseProgram(0);
     markerVO.unbind();
 }

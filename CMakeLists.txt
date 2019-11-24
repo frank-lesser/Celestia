@@ -32,6 +32,7 @@ option(ENABLE_THEORA  "Support video capture to OGG Theora? (Default: on)" ON)
 option(ENABLE_TOOLS   "Build different tools? (Default: off)" OFF)
 option(NATIVE_OSX_APP "Support native OSX paths read data from (Default: off)" OFF)
 option(FAST_MATH      "Build with unsafe fast-math compiller option (Default: off)" OFF)
+option(ENABLE_TTF     "Use TrueType fonts instead of TXF (Default: off)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type." FORCE)
@@ -122,6 +123,8 @@ if(ENABLE_SPICE)
     include_directories(${SPICE_INCLUDE_DIR})
     message(STATUS "Spice include directories: ${SPICE_INCLUDE_DIR}")
     add_library(CSPICE::CSPICE ALIAS Spice)
+  else()
+    include_directories(${CSPICE_INCLUDE_DIR})
   endif()
   add_definitions(-DUSE_SPICE)
 endif()
@@ -184,6 +187,13 @@ if(ENABLE_CELX)
   endif()
   include_directories(${LUA_INCLUDE_DIR})
   link_libraries(${LUA_LIBRARIES})
+endif()
+
+if(ENABLE_TTF)
+  find_package(Freetype REQUIRED)
+  link_libraries(Freetype::Freetype)
+else()
+  add_definitions(-DNO_TTF=1)
 endif()
 
 #[[
@@ -289,6 +299,8 @@ include_directories("${CMAKE_SOURCE_DIR}/src" ${CMAKE_BINARY_DIR})
 
 # configure a header file to pass some of the CMake settings
 # to the source code
+include(CheckSymbolExists)
+check_symbol_exists(wordexp wordexp.h HAVE_WORDEXP)
 check_include_files(byteswap.h HAVE_BYTESWAP_H)
 check_include_file_cxx(experimental/filesystem HAVE_EXPERIMENTAL_FILESYSTEM)
 

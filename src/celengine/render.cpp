@@ -517,16 +517,6 @@ Renderer::Renderer() :
     }
 
     shaderManager = new ShaderManager();
-
-    mountainRep        = MarkerRepresentation(MarkerRepresentation::Triangle, 8.0f, LocationLabelColor);
-    craterRep          = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, LocationLabelColor);
-    observatoryRep     = MarkerRepresentation(MarkerRepresentation::Plus,     8.0f, LocationLabelColor);
-    cityRep            = MarkerRepresentation(MarkerRepresentation::X,        3.0f, LocationLabelColor);
-    genericLocationRep = MarkerRepresentation(MarkerRepresentation::Square,   8.0f, LocationLabelColor);
-    galaxyRep          = MarkerRepresentation(MarkerRepresentation::Triangle, 8.0f, GalaxyLabelColor);
-    nebulaRep          = MarkerRepresentation(MarkerRepresentation::Square,   8.0f, NebulaLabelColor);
-    openClusterRep     = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, OpenClusterLabelColor);
-    globularRep        = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, OpenClusterLabelColor);
 }
 
 
@@ -1308,30 +1298,22 @@ void Renderer::addAnnotation(vector<Annotation>& annotations,
                              float size,
                              bool special)
 {
-    double winX, winY, winZ;
     GLint view[4] = { 0, 0, windowWidth, windowHeight };
-    float depth = (float) (pos.x() * modelMatrix[2] +
-                           pos.y() * modelMatrix[6] +
-                           pos.z() * modelMatrix[10]);
-    if (gluProject(pos.x(), pos.y(), pos.z(),
-                   modelMatrix,
-                   projMatrix,
-                   view,
-                   &winX, &winY, &winZ) != GL_FALSE)
+    Vector3d win;
+    Vector3d posd = pos.cast<double>();
+    if (Project(posd, modelMatrix, projMatrix, view, win))
     {
+        double depth = pos.x() * modelMatrix(2, 0) +
+                       pos.y() * modelMatrix(2, 1) +
+                       pos.z() * modelMatrix(2, 2);
+        win.z() = -depth;
+
         Annotation a;
-        if (special)
-        {
-            if (markerRep == nullptr)
-                a.labelText = labelText;
-        }
-        else
-        {
-            a.labelText = labelText;
-        }
+        if (!special || markerRep == nullptr)
+             a.labelText = labelText;
         a.markerRep = markerRep;
         a.color = color;
-        a.position = Vector3f((float) winX, (float) winY, -depth);
+        a.position = win.cast<float>();
         a.halign = halign;
         a.valign = valign;
         a.size = size;
@@ -1582,6 +1564,10 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
                            float nearDist,
                            float farDist)
 {
+    auto *prog = shaderManager->getShader(ShaderProperties::PerVertexColor);
+    if (prog == nullptr)
+        return;
+
     Body* body = orbitPath.body;
     double nearZ = -nearDist;  // negate, becase z is into the screen in camera space
     double farZ = -farDist;
@@ -1765,7 +1751,6 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
     else
         highlight = highlightObject.star() == orbitPath.star;
     Vector4f orbitColor = renderOrbitColor(body, highlight, orbitPath.opacity);
-    glColor4fv(orbitColor.data());
 
 #ifdef STIPPLED_LINES
     glLineStipple(3, 0x5555);
@@ -1780,6 +1765,7 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
         viewFrustumPlaneNormals[i] = frustum.plane(i).normal().cast<double>();
     }
 
+    prog->use();
     if (orbit->isPeriodic())
     {
         double period = orbit->getPeriod();
@@ -1831,6 +1817,7 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
     glDisable(GL_LINE_STIPPLE);
 #endif
 
+    glUseProgram(0);
     glPopMatrix();
 }
 
@@ -2436,8 +2423,7 @@ void Renderer::render(const Observer& observer,
 
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
-    glLoadIdentity();
-    glOrtho( 0.0, 1.0, 0.0, 1.0, -1.0, 1.0 );
+    glLoadMatrix(Ortho2D(0.0f, 1.0f, 0.0f, 1.0f));
     glMatrixMode (GL_MODELVIEW);
     glPushMatrix();
     glLoadIdentity();
@@ -2492,9 +2478,7 @@ void Renderer::draw(const Observer& observer,
     pixelSize = calcPixelSize(fov, (float) windowHeight);
 
     // Set up the projection we'll use for rendering stars.
-    gluPerspective(fov,
-                   (float) windowWidth / (float) windowHeight,
-                   NEAR_DIST, FAR_DIST);
+    glMatrix(Perspective(fov, getAspectRatio(), NEAR_DIST, FAR_DIST));
 
     // Set the modelview matrix
     glMatrixMode(GL_MODELVIEW);
@@ -2510,16 +2494,13 @@ void Renderer::draw(const Observer& observer,
     m_cameraOrientation = observer.getOrientationf();
 
     // Get the view frustum used for culling in camera space.
-    float viewAspectRatio = (float) windowWidth / (float) windowHeight;
     Frustum frustum(degToRad(fov),
-                    viewAspectRatio,
+                    getAspectRatio(),
                     MinNearPlaneDistance);
 
     // Get the transformed frustum, used for culling in the astrocentric coordinate
     // system.
-    Frustum xfrustum(degToRad(fov),
-                     viewAspectRatio,
-                     MinNearPlaneDistance);
+    Frustum xfrustum(frustum);
     xfrustum.transform(observer.getOrientationf().conjugate().toRotationMatrix());
 
     // Set up the camera for star rendering; the units of this phase
@@ -2530,8 +2511,8 @@ void Renderer::draw(const Observer& observer,
 
     // Get the model matrix *before* translation.  We'll use this for
     // positioning star and planet labels.
-    glGetDoublev(GL_MODELVIEW_MATRIX, modelMatrix);
-    glGetDoublev(GL_PROJECTION_MATRIX, projMatrix);
+    glGetDoublev(GL_MODELVIEW_MATRIX, modelMatrix.data());
+    glGetDoublev(GL_PROJECTION_MATRIX, projMatrix.data());
 
     clearSortedAnnotations();
 
@@ -3353,15 +3334,13 @@ void Renderer::draw(const Observer& observer,
             // Set up a perspective projection using the current interval's near and
             // far clip planes.
             glMatrixMode(GL_PROJECTION);
-            glLoadIdentity();
-            gluPerspective(fov,
-                           (float) windowWidth / (float) windowHeight,
-                           nearPlaneDistance,
-                           farPlaneDistance);
+            glLoadMatrix(Perspective(fov, getAspectRatio(),
+                                     nearPlaneDistance,
+                                     farPlaneDistance));
             glMatrixMode(GL_MODELVIEW);
 
             Frustum intervalFrustum(degToRad(fov),
-                                    (float) windowWidth / (float) windowHeight,
+                                    getAspectRatio(),
                                     -depthPartitions[interval].nearZ,
                                     -depthPartitions[interval].farZ);
 
@@ -3510,10 +3489,7 @@ void Renderer::draw(const Observer& observer,
     renderForegroundAnnotations(FontNormal);
 
     glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    gluPerspective(fov,
-                   (float) windowWidth / (float) windowHeight,
-                   NEAR_DIST, FAR_DIST);
+    glLoadMatrix(Perspective(fov, getAspectRatio(), NEAR_DIST, FAR_DIST));
     glMatrixMode(GL_MODELVIEW);
 
     if (!selectionVisible && (renderFlags & ShowMarkers))
@@ -3526,8 +3502,7 @@ void Renderer::draw(const Observer& observer,
     glDisable(GL_LIGHTING);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    glPolygonMode(GL_FRONT, GL_FILL);
-    glPolygonMode(GL_BACK, GL_FILL);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
@@ -3759,57 +3734,6 @@ struct LightIrradiancePredicate
 };
 
 
-template <typename T> static Matrix<T, 3, 1>
-ellipsoidTangent(const Matrix<T, 3, 1>& recipSemiAxes,
-                 const Matrix<T, 3, 1>& w,
-                 const Matrix<T, 3, 1>& e,
-                 const Matrix<T, 3, 1>& e_,
-                 T ee)
-{
-    // We want to find t such that -E(1-t) + Wt is the direction of a ray
-    // tangent to the ellipsoid.  A tangent ray will intersect the ellipsoid
-    // at exactly one point.  Finding the intersection between a ray and an
-    // ellipsoid ultimately requires using the quadratic formula, which has
-    // one solution when the discriminant (b^2 - 4ac) is zero.  The code below
-    // computes the value of t that results in a discriminant of zero.
-    Matrix<T, 3, 1> w_ = w.cwiseProduct(recipSemiAxes);//(w.x * recipSemiAxes.x, w.y * recipSemiAxes.y, w.z * recipSemiAxes.z);
-    T ww = w_.dot(w_);
-    T ew = w_.dot(e_);
-
-    // Before elimination of terms:
-    // double a =  4 * square(ee + ew) - 4 * (ee + 2 * ew + ww) * (ee - 1.0f);
-    // double b = -8 * ee * (ee + ew)  - 4 * (-2 * (ee + ew) * (ee - 1.0f));
-    // double c =  4 * ee * ee         - 4 * (ee * (ee - 1.0f));
-
-    // Simplify the below expression and eliminate the ee^2 terms; this
-    // prevents precision errors, as ee tends to be a very large value.
-    //T a =  4 * square(ee + ew) - 4 * (ee + 2 * ew + ww) * (ee - 1);
-    T a =  4 * (square(ew) - ee * ww + ee + 2 * ew + ww);
-    T b = -8 * (ee + ew);
-    T c =  4 * ee;
-
-    T t = 0;
-    T discriminant = b * b - 4 * a * c;
-
-    if (discriminant < 0)
-        t = (-b + (T) sqrt(-discriminant)) / (2 * a); // Bad!
-    else
-        t = (-b + (T) sqrt(discriminant)) / (2 * a);
-
-    // V is the direction vector.  We now need the point of intersection,
-    // which we obtain by solving the quadratic equation for the ray-ellipse
-    // intersection.  Since we already know that the discriminant is zero,
-    // the solution is just -b/2a
-    Matrix<T, 3, 1> v = -e * (1 - t) + w * t;
-    Matrix<T, 3, 1> v_ = v.cwiseProduct(recipSemiAxes);
-    T a1 = v_.dot(v_);
-    T b1 = (T) 2 * v_.dot(e_);
-    T t1 = -b1 / (2 * a1);
-
-    return e + v * t1;
-}
-
-
 void Renderer::renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
                                          const Vector3f& center,
                                          const Quaternionf& orientation,
@@ -3820,6 +3744,10 @@ void Renderer::renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
                                          bool lit)
 {
     if (atmosphere.height == 0.0f)
+        return;
+
+    auto *prog = shaderManager->getShader(ShaderProperties::PerVertexColor);
+    if (prog == nullptr)
         return;
 
     glDepthMask(GL_FALSE);
@@ -4061,6 +3989,7 @@ void Renderer::renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
     glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(SkyVertex),
                    static_cast<void*>(&skyVertices[0].color));
 
+    prog->use();
     for (int i = 0; i < nRings; i++)
     {
         glDrawElements(GL_QUAD_STRIP,
@@ -4070,140 +3999,82 @@ void Renderer::renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
     }
 
     glDisableClientState(GL_COLOR_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glUseProgram(0);
 }
 
 
-static void setupNightTextureCombine()
+static void renderSphereUnlit(const RenderInfo& ri,
+                              const Frustum& frustum,
+                              const Renderer *r)
 {
-    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE_EXT);
-    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB_EXT, GL_PRIMARY_COLOR_EXT);
-    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB_EXT, GL_ONE_MINUS_SRC_COLOR);
-    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB_EXT, GL_TEXTURE);
-    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB_EXT, GL_SRC_COLOR);
-    glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB_EXT, GL_MODULATE);
-}
+    Texture* textures[MAX_SPHERE_MESH_TEXTURES];
+    int nTextures = 0;
 
+    ShaderProperties shadprop;
 
-#if 0
-static void setupBumpTexenvAmbient(Color ambientColor)
-{
-    float texenvConst[4];
-    texenvConst[0] = ambientColor.red();
-    texenvConst[1] = ambientColor.green();
-    texenvConst[2] = ambientColor.blue();
-    texenvConst[3] = ambientColor.alpha();
-
-    // Set up the texenv_combine extension to do DOT3 bump mapping.
-    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE_EXT);
-
-    // The primary color contains the light direction in surface
-    // space, and texture0 is a normal map.  The lighting is
-    // calculated by computing the dot product.
-    glActiveTexture(GL_TEXTURE0);
-    glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB_EXT, GL_DOT3_RGB);
-    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB_EXT, GL_PRIMARY_COLOR_EXT);
-    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB_EXT, GL_SRC_COLOR);
-    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB_EXT, GL_TEXTURE);
-    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB_EXT, GL_SRC_COLOR);
-
-    // Add in the ambient color
-    glActiveTexture(GL_TEXTURE1);
-    glTexEnvfv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_COLOR, texenvConst);
-    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE_EXT);
-    glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB_EXT, GL_ADD);
-    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB_EXT, GL_PREVIOUS_EXT);
-    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB_EXT, GL_SRC_COLOR);
-    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB_EXT, GL_CONSTANT_EXT);
-    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB_EXT, GL_SRC_COLOR);
-    glEnable(GL_TEXTURE_2D);
-
-    // In the final stage, modulate the lighting value by the
-    // base texture color.
-    glActiveTexture(GL_TEXTURE2);
-    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE_EXT);
-    glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB_EXT, GL_MODULATE);
-    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB_EXT, GL_PREVIOUS_EXT);
-    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB_EXT, GL_SRC_COLOR);
-    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB_EXT, GL_TEXTURE);
-    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB_EXT, GL_SRC_COLOR);
-    glEnable(GL_TEXTURE_2D);
-
-    glActiveTexture(GL_TEXTURE0);
-}
-#endif
-
-
-static void renderSphereDefault(const RenderInfo& ri,
-                                const Frustum& frustum,
-                                bool lit)
-{
-    if (lit)
-        glEnable(GL_LIGHTING);
-    else
-        glDisable(GL_LIGHTING);
-
-    if (ri.baseTex == nullptr)
+    // Set up the textures used by this object
+    if (ri.baseTex != nullptr)
     {
-        glDisable(GL_TEXTURE_2D);
+        shadprop.texUsage = ShaderProperties::DiffuseTexture;
+        textures[nTextures++] = ri.baseTex;
     }
-    else
+    if (ri.nightTex != nullptr)
     {
-        glEnable(GL_TEXTURE_2D);
-        ri.baseTex->bind();
+        shadprop.texUsage |= ShaderProperties::NightTexture;
+        textures[nTextures++] = ri.nightTex;
     }
-
-    glColor(ri.color);
-
-    g_lodSphere->render(LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
-                        frustum, ri.pixWidth,
-                        ri.baseTex);
-    if (ri.nightTex != nullptr && ri.useTexEnvCombine)
-    {
-        ri.nightTex->bind();
-#ifdef USE_HDR
-#ifdef HDR_COMPRESS
-        Color nightColor(ri.color.red()   * 2.f,
-                         ri.color.green() * 2.f,
-                         ri.color.blue()  * 2.f,
-                         ri.nightLightScale);  // Modulate brightness using alpha
-#else
-        Color nightColor(ri.color.red(),
-                         ri.color.green(),
-                         ri.color.blue(),
-                         ri.nightLightScale);  // Modulate brightness using alpha
-#endif
-        glColor(nightColor);
-#endif
-        setupNightTextureCombine();
-        glEnable(GL_BLEND);
-#ifdef USE_HDR
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-#else
-        glBlendFunc(GL_ONE, GL_ONE);
-#endif
-        glAmbientLightColor(Color::Black); // Disable ambient light
-        g_lodSphere->render(LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
-                            frustum, ri.pixWidth,
-                            ri.nightTex);
-        glAmbientLightColor(ri.ambientColor);
-#ifdef USE_HDR
-        glColor(ri.color);
-#endif
-        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-    }
-
     if (ri.overlayTex != nullptr)
     {
-        ri.overlayTex->bind();
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        g_lodSphere->render(LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
-                            frustum, ri.pixWidth,
-                            ri.overlayTex);
-        glBlendFunc(GL_ONE, GL_ONE);
+        shadprop.texUsage |= ShaderProperties::OverlayTexture;
+        textures[nTextures++] = ri.overlayTex;
     }
+
+    // Get a shader for the current rendering configuration
+    auto* prog = r->getShaderManager().getShader(shadprop);
+    if (prog == nullptr)
+        return;
+    prog->use();
+
+    prog->textureOffset = 0.0f;
+    // TODO: introduce a new ShaderProperties light model, so those
+    // assignments are not required
+    prog->ambientColor = Color::White.toVector3();
+    prog->opacity = 1.0f;
+#ifdef USE_HDR
+    prog->nightLightScale = ri.nightLightScale;
+#endif
+    g_lodSphere->render(frustum, ri.pixWidth, textures, nTextures);
+
+    glUseProgram(0);
 }
 
+
+static void renderCloudsUnlit(const RenderInfo& ri,
+                              const Frustum& frustum,
+                              Texture *cloudTex,
+                              float cloudTexOffset,
+                              const Renderer *r)
+{
+    ShaderProperties shadprop;
+    shadprop.texUsage = ShaderProperties::DiffuseTexture;
+
+    // Get a shader for the current rendering configuration
+    auto* prog = r->getShaderManager().getShader(shadprop);
+    if (prog == nullptr)
+        return;
+    prog->use();
+
+    prog->textureOffset = cloudTexOffset;
+    // TODO: introduce a new ShaderProperties light model, so those
+    // assignments are not required
+    prog->ambientColor = Color::White.toVector3();
+    prog->opacity = 1.0f;
+
+    g_lodSphere->render(frustum, ri.pixWidth, &cloudTex, 1);
+
+    glUseProgram(0);
+}
 
 void Renderer::renderLocations(const Body& body,
                                const Vector3d& bodyPosition,
@@ -4637,20 +4508,6 @@ void Renderer::renderObject(const Vector3f& pos,
     // See if the surface should be lit
     bool lit = (obj.surface->appearanceFlags & Surface::Emissive) == 0;
 
-    // Set the OpenGL light state
-    unsigned int i;
-    for (i = 0; i < ls.nLights; i++)
-    {
-        const DirectionalLight& light = ls.lights[i];
-
-        glLightDirection(GL_LIGHT0 + i, ls.lights[i].direction_obj);
-
-        Vector3f lightColor = light.color.toVector3() * light.irradiance;
-        glLightColor(GL_LIGHT0 + i, GL_DIFFUSE, lightColor);
-        glLightColor(GL_LIGHT0 + i, GL_SPECULAR, lightColor);
-        glEnable(GL_LIGHT0 + i);
-    }
-
     // Compute the inverse model/view matrix
     Affine3f invModelView = obj.orientation *
                             Translation3f(-pos / obj.radius) *
@@ -4702,7 +4559,7 @@ void Renderer::renderObject(const Vector3f& pos,
     // radius (for an ellipsoidal planet, radius is taken to be
     // largest semiaxis.)
     Frustum viewFrustum(degToRad(fov),
-                        (float) windowWidth / (float) windowHeight,
+                        getAspectRatio(),
                         nearPlaneDistance / radius, frustumFarPlane / radius);
     viewFrustum.transform(invMV);
 
@@ -4710,9 +4567,11 @@ void Renderer::renderObject(const Vector3f& pos,
     Texture* cloudTex       = nullptr;
     Texture* cloudNormalMap = nullptr;
     float cloudTexOffset    = 0.0f;
-    if (obj.atmosphere != nullptr)
+    // Ugly cast required because MultiResTexture::find() is non-const
+    Atmosphere* atmosphere  = const_cast<Atmosphere*>(obj.atmosphere);
+
+    if (atmosphere != nullptr)
     {
-        Atmosphere* atmosphere = const_cast<Atmosphere*>(obj.atmosphere); // Ugly cast required because MultiResTexture::find() is non-const
         if ((renderFlags & ShowCloudMaps) != 0)
         {
             if (atmosphere->cloudTexture.tex[textureResolution] != InvalidResource)
@@ -4730,7 +4589,7 @@ void Renderer::renderObject(const Vector3f& pos,
         if (lit)
         {
             renderEllipsoid_GLSL(ri, ls,
-                                 const_cast<Atmosphere*>(obj.atmosphere), cloudTexOffset,
+                                 atmosphere, cloudTexOffset,
                                  scaleFactors,
                                  textureResolution,
                                  renderFlags,
@@ -4738,7 +4597,7 @@ void Renderer::renderObject(const Vector3f& pos,
         }
         else
         {
-            renderSphereDefault(ri, viewFrustum, false);
+            renderSphereUnlit(ri, viewFrustum, this);
         }
     }
     else
@@ -4772,6 +4631,7 @@ void Renderer::renderObject(const Vector3f& pos,
                                           this);
             }
 
+            // XXX: this code should be removed
             for (unsigned int i = 1; i < 8;/*context->getMaxTextures();*/ i++)
             {
                 glActiveTexture(GL_TEXTURE0 + i);
@@ -4779,7 +4639,6 @@ void Renderer::renderObject(const Vector3f& pos,
             }
             glActiveTexture(GL_TEXTURE0);
             glEnable(GL_TEXTURE_2D);
-            glUseProgram(0);
         }
     }
 
@@ -4799,10 +4658,8 @@ void Renderer::renderObject(const Vector3f& pos,
         }
     }
 
-    if (obj.atmosphere != nullptr)
+    if (atmosphere != nullptr)
     {
-        Atmosphere* atmosphere = const_cast<Atmosphere *>(obj.atmosphere);
-
         // Compute the apparent thickness in pixels of the atmosphere.
         // If it's only one pixel thick, it can look quite unsightly
         // due to aliasing.  To avoid popping, we gradually fade in the
@@ -4839,8 +4696,6 @@ void Renderer::renderObject(const Vector3f& pos,
             {
                 glPushMatrix();
                 glLoadIdentity();
-                glDisable(GL_LIGHTING);
-                glDisable(GL_TEXTURE_2D);
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -4854,7 +4709,6 @@ void Renderer::renderObject(const Vector3f& pos,
                                           ls,
                                           thicknessInPixels,
                                           lit);
-                glEnable(GL_TEXTURE_2D);
                 glPopMatrix();
             }
         }
@@ -4872,28 +4726,10 @@ void Renderer::renderObject(const Vector3f& pos,
             if (distance - radius < atmosphere->cloudHeight)
                 glFrontFace(GL_CW);
 
-            if (atmosphere->cloudSpeed != 0.0f)
-            {
-                // Make the clouds appear to rotate above the surface of
-                // the planet.  This is easier to do with the texture
-                // matrix than the model matrix because changing the
-                // texture matrix doesn't require us to compute a second
-                // set of model space rendering parameters.
-                glMatrixMode(GL_TEXTURE);
-                glTranslatef(cloudTexOffset, 0.0f, 0.0f);
-                glMatrixMode(GL_MODELVIEW);
-            }
-
-            glEnable(GL_LIGHTING);
             glDepthMask(GL_FALSE);
             cloudTex->bind();
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-#ifdef HDR_COMPRESS
-            glColor4f(0.5f, 0.5f, 0.5f, 1);
-#else
-            glColor4f(1, 1, 1, 1);
-#endif
 
             // Cloud layers can be trouble for the depth buffer, since they tend
             // to be very close to the surface of a planet relative to the radius
@@ -4921,12 +4757,7 @@ void Renderer::renderObject(const Vector3f& pos,
             }
             else
             {
-                glDisable(GL_LIGHTING);
-                g_lodSphere->render(LODSphereMesh::Normals | LODSphereMesh::TexCoords0,
-                                    viewFrustum,
-                                    ri.pixWidth,
-                                    cloudTex);
-                glEnable(GL_LIGHTING);
+                renderCloudsUnlit(ri, viewFrustum, cloudTex, cloudTexOffset, this);
             }
 
             glDisable(GL_POLYGON_OFFSET_FILL);
@@ -4945,13 +4776,11 @@ void Renderer::renderObject(const Vector3f& pos,
 
     if (obj.rings != nullptr && (renderFlags & ShowPlanetRings) != 0)
     {
-        if ((obj.surface->appearanceFlags & Surface::Emissive) == 0 &&
-            (renderFlags & ShowRingShadows) != 0)
+        if (lit && (renderFlags & ShowRingShadows) != 0)
         {
             Texture* ringsTex = obj.rings->texture.find(textureResolution);
             if (ringsTex != nullptr)
             {
-                glEnable(GL_TEXTURE_2D);
                 ringsTex->bind();
             }
         }
@@ -4968,14 +4797,9 @@ void Renderer::renderObject(const Vector3f& pos,
         }
     }
 
-    // Disable all light sources other than the first
-    for (i = 0; i < ls.nLights; i++)
-        glDisable(GL_LIGHT0 + i);
-
     glPopMatrix();
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
-    glDisable(GL_LIGHTING);
     glEnable(GL_BLEND);
 }
 
@@ -5384,6 +5208,13 @@ void Renderer::renderPlanet(Body& body,
 
         if (body.getLocations() != nullptr && (labelMode & LocationLabels) != 0)
         {
+            // Set up location markers for this body
+            mountainRep    = MarkerRepresentation(MarkerRepresentation::Triangle, 8.0f, LocationLabelColor);
+            craterRep      = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, LocationLabelColor);
+            observatoryRep = MarkerRepresentation(MarkerRepresentation::Plus,     8.0f, LocationLabelColor);
+            cityRep        = MarkerRepresentation(MarkerRepresentation::X,        3.0f, LocationLabelColor);
+            genericLocationRep = MarkerRepresentation(MarkerRepresentation::Square, 8.0f, LocationLabelColor);
+
             glEnable(GL_DEPTH_TEST);
             glDepthMask(GL_FALSE);
             glDisable(GL_BLEND);
@@ -5522,22 +5353,6 @@ struct CometTailVertex
 
 static CometTailVertex cometTailVertices[CometTailSlices * MaxCometTailPoints];
 
-static void ProcessCometTailVertex(const Color& cometTailColor,
-                                   const CometTailVertex& v,
-                                   const Vector3f& viewDir,
-                                   float fadeDistFromSun)
-{
-    // If fadeDistFromSun = x/x0 >= 1.0, comet tail starts fading,
-    // i.e. fadeFactor quickly transits from 1 to 0.
-
-    float fadeFactor = 0.5f - 0.5f * (float) tanh(fadeDistFromSun - 1.0f / fadeDistFromSun);
-    float shade = abs(viewDir.dot(v.normal) * v.brightness * fadeFactor);
-    glColor4f(cometTailColor.red(), cometTailColor.green(),
-              cometTailColor.blue(), shade);
-    glVertex(v.point);
-}
-
-
 // Compute a rough estimate of the visible length of the dust tail.
 // TODO: This is old code that needs to be rewritten. For one thing,
 // the length is inversely proportional to the distance from the sun,
@@ -5556,6 +5371,10 @@ void Renderer::renderCometTail(const Body& body,
                                const Observer& observer,
                                float discSizeInPixels)
 {
+    auto prog = shaderManager->getShader("comet");
+    if (prog == nullptr)
+        return;
+
     double now = observer.getTime();
 
     Vector3f cometPoints[MaxCometTailPoints];
@@ -5620,74 +5439,57 @@ void Renderer::renderCometTail(const Body& body,
     Vector3f u = v.unitOrthogonal();
     Vector3f w = u.cross(v);
 
-    glColor4f(0.0f, 1.0f, 1.0f, 0.5f);
-    glPushMatrix();
-    glTranslate(pos);
-
-    // glActiveTexture(GL_TEXTURE0);
-    glDisable(GL_TEXTURE_2D);
-    glDisable(GL_LIGHTING);
-    glDepthMask(GL_FALSE);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-
     for (i = 0; i < nTailPoints; i++)
     {
         float brightness = 1.0f - (float) i / (float) (nTailPoints - 1);
         Vector3f v0, v1;
         float sectionLength;
-        if (i != 0 && i != nTailPoints - 1)
+        float w0, w1;
+        // Special case the first vertex in the comet tail
+        if (i == 0)
         {
-            v0 = cometPoints[i] - cometPoints[i - 1];
-            v1 = cometPoints[i + 1] - cometPoints[i];
-            sectionLength = v0.norm();
-            v0.normalize();
-            v1.normalize();
-            q.setFromTwoVectors(v0, v1);
-            Matrix3f m = q.toRotationMatrix();
-            u = m * u;
-            v = m * v;
-            w = m * w;
-        }
-        else if (i == 0)
-        {
-            v0 = cometPoints[i + 1] - cometPoints[i];
+            v0 = cometPoints[1] - cometPoints[0];
             sectionLength = v0.norm();
             v0.normalize();
             v1 = v0;
+            w0 = 1.0f;
+            w1 = 0.0f;
         }
         else
         {
             v0 = cometPoints[i] - cometPoints[i - 1];
             sectionLength = v0.norm();
             v0.normalize();
-            v1 = v0;
+
+            if (i == nTailPoints - 1)
+            {
+                v1 = v0;
+            }
+            else
+            {
+                v1 = (cometPoints[i + 1] - cometPoints[i]).normalized();
+                q.setFromTwoVectors(v0, v1);
+                Matrix3f m = q.toRotationMatrix();
+                u = m * u;
+                v = m * v;
+                w = m * w;
+            }
+            float dr = (dustTailRadius / (float) nTailPoints) / sectionLength;
+            w0 = atan(dr);
+            float d = sqrt(1.0f + w0 * w0);
+            w1 = 1.0f / d;
+            w0 = w0 / d;
         }
 
-        float radius = (float) i / (float) nTailPoints *
-            dustTailRadius;
-        float dr = (dustTailRadius / (float) nTailPoints) /
-            sectionLength;
-
-        auto w0 = (float) atan(dr);
-        float d = std::sqrt(1.0f + w0 * w0);
-        float w1 = 1.0f / d;
-        w0 = w0 / d;
-
-        // Special case the first vertex in the comet tail
-        if (i == 0)
-        {
-            w0 = 1;
-            w1 = 0.0f;
-        }
-
+        float radius = (float) i / (float) nTailPoints * dustTailRadius;
         for (int j = 0; j < nTailSlices; j++)
         {
             float theta = (float) (2 * PI * (float) j / nTailSlices);
-            auto s = (float) sin(theta);
-            auto c = (float) cos(theta);
+            float s, c;
+            sincos(theta, s, c);
             CometTailVertex& vtx = cometTailVertices[i * nTailSlices + j];
             vtx.normal = u * (s * w1) + w * (c * w1) + v * w0;
+            vtx.normal.normalize();
             s *= radius;
             c *= radius;
 
@@ -5696,40 +5498,65 @@ void Renderer::renderCometTail(const Body& body,
         }
     }
 
-    Vector3f viewDir = pos.normalized();
-
+    glPushMatrix();
+    glTranslate(pos);
+    glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+
+    prog->use();
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_NORMAL_ARRAY);
+    auto brightness = prog->attribIndex("brightness");
+    if (brightness != -1)
+        glEnableVertexAttribArray(brightness);
+    prog->vec3Param("color") = body.getCometTailColor().toVector3();
+    prog->vec3Param("viewDir") = pos.normalized();
+    // If fadeDistFromSun = x/x0 >= 1.0, comet tail starts fading,
+    // i.e. fadeFactor quickly transits from 1 to 0.
+    float fadeFactor = 0.5f * (1.0f - tanh(fadeDistance - 1.0f / fadeDistance));
+    prog->floatParam("fadeFactor") = fadeFactor;
+
+    vector<unsigned short> indeces;
+    indeces.reserve(nTailSlices * 2 + 2);
+    for (int j = 0; j < nTailSlices; j++)
+    {
+        indeces.push_back(j);
+        indeces.push_back(j + nTailSlices);
+    }
+    indeces.push_back(0);
+    indeces.push_back(nTailSlices);
+
+    const size_t stride = sizeof(CometTailVertex);
     for (i = 0; i < nTailPoints - 1; i++)
     {
-        glBegin(GL_QUAD_STRIP);
-        int n = i * nTailSlices;
-        for (int j = 0; j < nTailSlices; j++)
-        {
-            ProcessCometTailVertex(body.getCometTailColor(),
-                                   cometTailVertices[n + j], viewDir,
-                                   fadeDistance);
-            ProcessCometTailVertex(body.getCometTailColor(),
-                                   cometTailVertices[n + j + nTailSlices],
-                                   viewDir, fadeDistance);
-        }
-        ProcessCometTailVertex(body.getCometTailColor(),
-                               cometTailVertices[n], viewDir, fadeDistance);
-        ProcessCometTailVertex(body.getCometTailColor(),
-                               cometTailVertices[n + nTailSlices],
-                               viewDir, fadeDistance);
-        glEnd();
+        const auto p = &cometTailVertices[i * nTailSlices];
+        glVertexPointer(3, GL_FLOAT, stride, &p->point);
+        glNormalPointer(GL_FLOAT, stride, &p->normal);
+        if (brightness != -1)
+            glVertexAttribPointer(brightness, 1, GL_FLOAT, GL_FALSE, stride, &p->brightness);
+        glDrawElements(GL_TRIANGLE_STRIP, indeces.size(), GL_UNSIGNED_SHORT, indeces.data());
     }
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glDisableClientState(GL_NORMAL_ARRAY);
+    if (brightness == -1)
+        glDisableVertexAttribArray(brightness);
     glEnable(GL_CULL_FACE);
+    glUseProgram(0);
 
-    glBegin(GL_LINE_STRIP);
-    for (i = 0; i < nTailPoints; i++)
-    {
-        glVertex(cometPoints[i]);
-    }
-    glEnd();
-
+#ifdef DEBUG_COMET_TAIL
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_LIGHTING);
+    glColor4f(0.0f, 1.0f, 1.0f, 0.5f);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glVertexPointer(3, GL_FLOAT, 0, cometPoints);
+    glDrawArrays(GL_LINE_STRIP, 0, nTailPoints);
+    glDisableClientState(GL_VERTEX_ARRAY);
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
+#endif
 
     glPopMatrix();
 }
@@ -6727,7 +6554,7 @@ void Renderer::renderPointStars(const StarDatabase& starDB,
     starRenderer.starVertexBuffer  = pointStarVertexBuffer;
     starRenderer.glareVertexBuffer = glareVertexBuffer;
     starRenderer.fov               = fov;
-    starRenderer.cosFOV            = (float) cos(degToRad(calcMaxFOV(fov, (float) windowWidth / (float) windowHeight)) / 2.0f);
+    starRenderer.cosFOV            = (float) cos(degToRad(calcMaxFOV(fov, getAspectRatio())) / 2.0f);
 
     starRenderer.pixelSize         = pixelSize;
     starRenderer.brightnessScale   = brightnessScale * corrFac;
@@ -6790,7 +6617,7 @@ void Renderer::renderPointStars(const StarDatabase& starDB,
                             obsPos.cast<float>(),
                             observer.getOrientationf(),
                             degToRad(fov),
-                            (float) windowWidth / (float) windowHeight,
+                            getAspectRatio(),
                             faintestMagNight,
 #ifdef OCTREE_DEBUG
                             &m_starProcStats);
@@ -6912,11 +6739,8 @@ void DSORenderer::process(DeepSkyObject* const & dso,
 
                     glMatrixMode(GL_PROJECTION);
                     glPushMatrix();
-                    glLoadIdentity();
-                    gluPerspective(fov,
-                                   (float) wWidth / (float) wHeight,
-                                   nearZ,
-                                   farZ);
+                    float t = (float) wWidth / (float) wHeight;
+                    glLoadMatrix(Perspective(fov, t, nearZ, farZ));
                     glMatrixMode(GL_MODELVIEW);
                 }
 
@@ -7044,13 +6868,18 @@ void Renderer::renderDeepSkyObjects(const Universe&  universe,
     dsoRenderer.wHeight          = windowHeight;
 
     dsoRenderer.frustum = Frustum(degToRad(fov),
-                        (float) windowWidth / (float) windowHeight,
-                        MinNearPlaneDistance);
+                                  getAspectRatio(),
+                                  MinNearPlaneDistance);
     // Use pixelSize * screenDpi instead of FoV, to eliminate windowHeight dependence.
     // = 1.0 at startup
     float effDistanceToScreen = mmToInches((float) REF_DISTANCE_TO_SCREEN) * pixelSize * getScreenDpi();
 
     dsoRenderer.labelThresholdMag = 2.0f * max(1.0f, (faintestMag - 4.0f) * (1.0f - 0.5f * (float) log10(effDistanceToScreen)));
+
+    galaxyRep      = MarkerRepresentation(MarkerRepresentation::Triangle, 8.0f, GalaxyLabelColor);
+    nebulaRep      = MarkerRepresentation(MarkerRepresentation::Square,   8.0f, NebulaLabelColor);
+    openClusterRep = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, OpenClusterLabelColor);
+    globularRep    = MarkerRepresentation(MarkerRepresentation::Circle,   8.0f, OpenClusterLabelColor);
 
     // Render any line primitives with smooth lines
     // (mostly to make graticules look good.)
@@ -7067,7 +6896,7 @@ void Renderer::renderDeepSkyObjects(const Universe&  universe,
                            obsPos,
                            observer.getOrientationf(),
                            degToRad(fov),
-                           (float) windowWidth / (float) windowHeight,
+                           getAspectRatio(),
                            2 * faintestMagNight,
 #ifdef OCTREE_DEBUG
                            &m_dsoProcStats);
@@ -7159,104 +6988,8 @@ void Renderer::renderSkyGrids(const Observer& observer)
         }
     }
 
-    if ((renderFlags & ShowEcliptic) != 0)
-    {
-        // Draw the J2000.0 ecliptic; trivial, since this forms the basis for
-        // Celestia's coordinate system.
-        const int subdivision = 200;
-        glColor(EclipticColor);
-        glBegin(GL_LINE_LOOP);
-        for (int i = 0; i < subdivision; i++)
-        {
-            double theta = (double) i / (double) subdivision * 2 * PI;
-            glVertex3f((float) cos(theta) * 1000.0f, 0.0f, (float) sin(theta) * 1000.0f);
-        }
-        glEnd();
-    }
+    renderEclipticLine();
 }
-
-
-/*! Draw an arrow at the view border pointing to an offscreen selection. This method
- *  should only be called when the selection lies outside the view frustum.
- */
-void Renderer::renderSelectionPointer(const Observer& observer,
-                                      double now,
-                                      const Frustum& viewFrustum,
-                                      const Selection& sel)
-{
-    const float cursorDistance = 20.0f;
-    if (sel.empty())
-        return;
-
-    Matrix3f cameraMatrix = observer.getOrientationf().conjugate().toRotationMatrix();
-    Vector3f u = cameraMatrix * Vector3f::UnitX();
-    Vector3f v = cameraMatrix * Vector3f::UnitY();
-
-    // Get the position of the cursor relative to the eye
-    Vector3d position = sel.getPosition(now).offsetFromKm(observer.getPosition());
-    double distance = position.norm();
-    bool isVisible = viewFrustum.testSphere(position, sel.radius()) != Frustum::Outside;
-    position *= cursorDistance / distance;
-
-#ifdef USE_HDR
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
-#endif
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_TEXTURE_2D);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    if (!isVisible)
-    {
-        double viewAspectRatio = (double) windowWidth / (double) windowHeight;
-        double vfov = observer.getFOV();
-        auto h = (float) tan(vfov / 2);
-        auto w = (float) (h * viewAspectRatio);
-        float diag = std::sqrt(h * h + w * w);
-
-        Vector3f posf = position.cast<float>();
-        posf *= (1.0f / cursorDistance);
-        float x = u.dot(posf);
-        float y = v.dot(posf);
-        float angle = std::atan2(y, x);
-        float c = std::cos(angle);
-        float s = std::sin(angle);
-
-        float t = 1.0f;
-        float x0 = c * diag;
-        float y0 = s * diag;
-        if (std::abs(x0) < w)
-            t = h / std::abs(y0);
-        else
-            t = w / std::abs(x0);
-        x0 *= t;
-        y0 *= t;
-        glColor(SelectionCursorColor, 0.6f);
-        Vector3f center = -cameraMatrix * Vector3f::UnitZ();
-
-        glPushMatrix();
-        glTranslatef(center.x(), center.y(), center.z());
-
-        Vector3f p0(Vector3f::Zero());
-        Vector3f p1(-20.0f * pixelSize,  6.0f * pixelSize, 0.0f);
-        Vector3f p2(-20.0f * pixelSize, -6.0f * pixelSize, 0.0f);
-
-        glBegin(GL_TRIANGLES);
-        glVertex((p0.x() * c - p0.y() * s + x0) * u + (p0.x() * s + p0.y() * c + y0) * v);
-        glVertex((p1.x() * c - p1.y() * s + x0) * u + (p1.x() * s + p1.y() * c + y0) * v);
-        glVertex((p2.x() * c - p2.y() * s + x0) * u + (p2.x() * s + p2.y() * c + y0) * v);
-        glEnd();
-
-        glPopMatrix();
-    }
-
-#ifdef USE_HDR
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-#endif
-
-    glEnable(GL_TEXTURE_2D);
-}
-
 
 void Renderer::labelConstellations(const AsterismList& asterisms,
                                    const Observer& observer)
@@ -7318,75 +7051,30 @@ void Renderer::labelConstellations(const AsterismList& asterisms,
 
 
 void Renderer::renderParticles(const vector<Particle>& particles,
-                               const Quaternionf& orientation)
+                               const Quaternionf& /*orientation*/)
 {
-    int nParticles = particles.size();
+    ShaderProperties shaderprop;
+    shaderprop.lightModel = ShaderProperties::ParticleModel;
+    shaderprop.texUsage = ShaderProperties::PointSprite;
+    auto *prog = shaderManager->getShader(shaderprop);
+    if (prog == nullptr)
+        return;
+    prog->use();
 
-    {
-        Matrix3f m = orientation.conjugate().toRotationMatrix();
-        Vector3f v0 = m * Vector3f(-1, -1, 0);
-        Vector3f v1 = m * Vector3f( 1, -1, 0);
-        Vector3f v2 = m * Vector3f( 1,  1, 0);
-        Vector3f v3 = m * Vector3f(-1,  1, 0);
+    glEnable(GL_POINT_SPRITE);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glVertexPointer(3, GL_FLOAT, sizeof(Particle), &particles[0].center);
+    glEnableVertexAttribArray(CelestiaGLProgram::PointSizeAttributeIndex);
+    glVertexAttribPointer(CelestiaGLProgram::PointSizeAttributeIndex,
+                          1, GL_FLOAT, GL_FALSE,
+                          sizeof(Particle), &particles[0].size);
+    glDrawArrays(GL_POINTS, 0, particles.size());
 
-        glBegin(GL_QUADS);
-        for (int i = 0; i < nParticles; i++)
-        {
-            Vector3f center = particles[i].center;
-            float size = particles[i].size;
-
-            glColor(particles[i].color);
-            glTexCoord2f(0, 1);
-            glVertex(center + (v0 * size));
-            glTexCoord2f(1, 1);
-            glVertex(center + (v1 * size));
-            glTexCoord2f(1, 0);
-            glVertex(center + (v2 * size));
-            glTexCoord2f(0, 0);
-            glVertex(center + (v3 * size));
-        }
-        glEnd();
-    }
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glDisableVertexAttribArray(CelestiaGLProgram::PointSizeAttributeIndex);
+    glUseProgram(0);
+    glDisable(GL_POINT_SPRITE);
 }
-
-
-static void renderCrosshair(float pixelSize, double tsec)
-{
-    const float cursorMinRadius = 6.0f;
-    const float cursorRadiusVariability = 4.0f;
-    const float minCursorWidth = 7.0f;
-    const float cursorPulsePeriod = 1.5f;
-
-    float selectionSizeInPixels = pixelSize;
-    float cursorRadius = selectionSizeInPixels + cursorMinRadius;
-    cursorRadius += cursorRadiusVariability * (float) (0.5 + 0.5 * std::sin(tsec * 2 * PI / cursorPulsePeriod));
-
-    // Enlarge the size of the cross hair sligtly when the selection
-    // has a large apparent size
-    float cursorGrow = max(1.0f, min(2.5f, (selectionSizeInPixels - 10.0f) / 100.0f));
-
-    float h = 2.0f * cursorGrow;
-    float cursorWidth = minCursorWidth * cursorGrow;
-    float r0 = cursorRadius;
-    float r1 = cursorRadius + cursorWidth;
-
-    const unsigned int markCount = 4;
-    Vector3f p0(r0, 0.0f, 0.0f);
-    Vector3f p1(r1, -h, 0.0f);
-    Vector3f p2(r1,  h, 0.0f);
-
-    glBegin(GL_TRIANGLES);
-    for (unsigned int i = 0; i < markCount; i++)
-    {
-        float theta = (float) (PI / 4.0) + (float) i / (float) markCount * (float) (2 * PI);
-        Matrix3f rotation = AngleAxisf(theta, Vector3f::UnitZ()).toRotationMatrix();
-        glVertex(rotation * p0);
-        glVertex(rotation * p1);
-        glVertex(rotation * p2);
-    }
-    glEnd();
-}
-
 
 void Renderer::renderAnnotations(const vector<Annotation>& annotations, FontStyle fs)
 {
@@ -7406,8 +7094,7 @@ void Renderer::renderAnnotations(const vector<Annotation>& annotations, FontStyl
 
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
-    glLoadIdentity();
-    gluOrtho2D(0, windowWidth, 0, windowHeight);
+    glLoadMatrix(Ortho2D(0.0f, (float)windowWidth, 0.0f, (float)windowHeight));
     glMatrixMode(GL_MODELVIEW);
     glPushMatrix();
     glLoadIdentity();
@@ -7429,12 +7116,10 @@ void Renderer::renderAnnotations(const vector<Annotation>& annotations, FontStyl
             glTranslatef((GLfloat) (int) annotations[i].position.x(),
                          (GLfloat) (int) annotations[i].position.y(), 0.0f);
 
-            glDisable(GL_TEXTURE_2D);
             if (markerRep.symbol() == MarkerRepresentation::Crosshair)
-                renderCrosshair(size, realTime);
+                renderCrosshair(size, realTime, annotations[i].color);
             else
                 markerRep.render(*this, size);
-            glEnable(GL_TEXTURE_2D);
 
             if (!markerRep.label().empty())
             {
@@ -7542,8 +7227,7 @@ Renderer::renderSortedAnnotations(vector<Annotation>::iterator iter,
 
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
-    glLoadIdentity();
-    gluOrtho2D(0, windowWidth, 0, windowHeight);
+    glLoadMatrix(Ortho2D(0.0f, (float)windowWidth, 0.0f, (float)windowHeight));
     glMatrixMode(GL_MODELVIEW);
     glPushMatrix();
     glLoadIdentity();
@@ -7578,12 +7262,10 @@ Renderer::renderSortedAnnotations(vector<Annotation>::iterator iter,
             glTranslatef((GLfloat) (int) iter->position.x(), (GLfloat) (int) iter->position.y(), ndc_z);
             glColor(iter->color);
 
-            glDisable(GL_TEXTURE_2D);
             if (markerRep.symbol() == MarkerRepresentation::Crosshair)
-                renderCrosshair(size, realTime);
+                renderCrosshair(size, realTime, iter->color);
             else
                 markerRep.render(*this, size);
-            glEnable(GL_TEXTURE_2D);
 
             if (!markerRep.label().empty())
             {
@@ -7631,8 +7313,7 @@ Renderer::renderAnnotations(vector<Annotation>::iterator startIter,
 
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
-    glLoadIdentity();
-    gluOrtho2D(0, windowWidth, 0, windowHeight);
+    glLoadMatrix(Ortho2D(0.0f, (float)windowWidth, 0.0f, (float)windowHeight));
     glMatrixMode(GL_MODELVIEW);
     glPushMatrix();
     glLoadIdentity();
@@ -7668,12 +7349,10 @@ Renderer::renderAnnotations(vector<Annotation>::iterator startIter,
             glTranslatef((GLfloat) (int) iter->position.x(), (GLfloat) (int) iter->position.y(), ndc_z);
             glColor(iter->color);
 
-            glDisable(GL_TEXTURE_2D);
             if (markerRep.symbol() == MarkerRepresentation::Crosshair)
-                renderCrosshair(size, realTime);
+                renderCrosshair(size, realTime, iter->color);
             else
                 markerRep.render(*this, size);
-            glEnable(GL_TEXTURE_2D);
 
             if (!markerRep.label().empty())
             {
@@ -7719,7 +7398,7 @@ void Renderer::renderMarkers(const MarkerList& markers,
     // vertical field of view; we want the field of view as measured on the
     // diagonal between viewport corners.
     double h = tan(degToRad(fov / 2));
-    double diag = sqrt(1.0 + square(h) + square(h * (double) windowWidth / (double) windowHeight));
+    double diag = sqrt(1.0 + square(h) + square(h * (double) getAspectRatio()));
     double cosFOV = 1.0 / diag;
 
     Vector3d viewVector = cameraOrientation.conjugate() * -Vector3d::UnitZ();
@@ -7873,7 +7552,10 @@ void Renderer::notifyWatchers() const
 
 void Renderer::updateBodyVisibilityMask()
 {
-    int flags = 0;
+    // Bodies with type `Invisible' (e.g. ReferencePoints) are not drawn,
+    // but if their property `Visible' is set they have visible labels,
+    // so we make `Body::Invisible' class visible.
+    int flags = Body::Invisible;
 
     if ((renderFlags & Renderer::ShowPlanets) != 0)
         flags |= Body::Planet;
@@ -8070,4 +7752,9 @@ void Renderer::setRenderRegion(int x, int y, int width, int height, bool withSci
 
     setViewport(x, y, width, height);
     resize(width, height);
+}
+
+float Renderer::getAspectRatio() const
+{
+    return static_cast<float>(windowWidth) / static_cast<float>(windowHeight);
 }

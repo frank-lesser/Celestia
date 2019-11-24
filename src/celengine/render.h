@@ -22,7 +22,11 @@
 #include <celengine/starcolors.h>
 #include <celengine/rendcontext.h>
 #include "celengine/vertexobject.h"
+#if NO_TTF
 #include <celtxf/texturefont.h>
+#else
+#include <celttf/truetypefont.h>
+#endif
 #include <vector>
 #include <list>
 #include <string>
@@ -114,6 +118,7 @@ class Renderer
 #endif
     void shutdown() {};
     void resize(int, int);
+    float getAspectRatio() const;
 
     float calcPixelSize(float fovY, float windowHeight);
     void setFaintestAM45deg(float);
@@ -483,6 +488,8 @@ class Renderer
 
     void renderAsterisms(const Universe&, float);
     void renderBoundaries(const Universe&, float);
+    void renderEclipticLine();
+    void renderCrosshair(float size, double tsec, const Color &color);
 
     void buildRenderLists(const Eigen::Vector3d& astrocentricObserverPos,
                           const celmath::Frustum& viewFrustum,
@@ -712,8 +719,8 @@ class Renderer
 
     std::vector<LightSource> lightSourceList;
 
-    double modelMatrix[16];
-    double projMatrix[16];
+    Eigen::Matrix4d modelMatrix;
+    Eigen::Matrix4d projMatrix;
 
     bool useCompressedTextures{ false };
     unsigned int textureResolution;
