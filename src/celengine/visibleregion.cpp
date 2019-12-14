@@ -92,7 +92,7 @@ renderTerminator(Renderer* renderer, const vector<Vector3f>& pos, const Vector4f
      * Because of this we make calculations on a CPU and stream results to GPU.
      */
 
-    static celgl::VertexObject vo{ GL_ARRAY_BUFFER, maxSections * sizeof(Vector3f), GL_DYNAMIC_DRAW };
+    static celgl::VertexObject vo{ GL_ARRAY_BUFFER, maxSections * sizeof(Vector3f), GL_STREAM_DRAW };
 
     auto *prog = renderer->getShaderManager().getShader("uniform_color");
     if (prog == nullptr)
@@ -169,9 +169,6 @@ VisibleRegion::render(Renderer* renderer,
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 #endif
 
-    glDisable(GL_TEXTURE_2D);
-    glDisable(GL_LIGHTING);
-
     glPushMatrix();
     glRotate(qf.conjugate());
 
@@ -219,7 +216,6 @@ VisibleRegion::render(Renderer* renderer,
 
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
-    glEnable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 }

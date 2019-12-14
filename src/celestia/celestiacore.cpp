@@ -2416,11 +2416,13 @@ static string DistanceLyToStr(double distance)
     {
         units = _("km");
         distance = astro::lightYearsToKilometers(distance);
+        return fmt::sprintf("%.2f %s", distance, units);
     }
     else
     {
         units = _("m");
         distance = astro::lightYearsToKilometers(distance) * 1000.0f;
+        return fmt::sprintf("%.2f %s", distance, units);
     }
 
     return fmt::sprintf("%s %s", SigDigitNum(distance, 5), units);
@@ -2460,6 +2462,16 @@ static void displayRotationPeriod(Overlay& overlay, double days)
     }
 
     fmt::fprintf(overlay, _("Rotation period: %s %s\n"), n, p);
+}
+
+static void displayMass(Overlay& overlay, float mass)
+{
+    if (mass < 0.001f)
+        fmt::fprintf(overlay, _("Mass: %.6g kg\n"), mass * astro::EarthMass);
+    else if (mass > 50)
+        fmt::fprintf(overlay, _("Mass: %.2f Mj\n"), mass * astro::EarthMass / astro::JupiterMass);
+    else
+        fmt::fprintf(overlay, _("Mass: %.2f Me\n"), mass);
 }
 
 static void displaySpeed(Overlay& overlay, float speed)
@@ -2839,18 +2851,12 @@ static void displayPlanetInfo(Overlay& overlay,
         if (body.getRotationModel(t)->isPeriodic())
             displayRotationPeriod(overlay, body.getRotationModel(t)->getPeriod());
 
-        if (body.getName() != "Earth")
-        {
-            if (body.getMass() > 0)
-                fmt::fprintf(overlay, _("Mass: %.2f Me\n"), body.getMass());
-        }
+        if (body.getName() != "Earth" && body.getMass() > 0)
+            displayMass(overlay, body.getMass());
 
         float density = body.getDensity();
         if (density > 0)
-        {
             fmt::fprintf(overlay, _("Density: %.2f x 1000 kg/m^3\n"), density / 1000.0);
-        }
-
 
         float planetTemp = body.getTemperature(t);
         if (planetTemp > 0)

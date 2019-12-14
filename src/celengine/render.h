@@ -11,6 +11,9 @@
 #ifndef _CELENGINE_RENDER_H_
 #define _CELENGINE_RENDER_H_
 
+#include <vector>
+#include <list>
+#include <string>
 #include <Eigen/Core>
 #include <celmath/frustum.h>
 #include <celengine/universe.h>
@@ -21,23 +24,23 @@
 #endif
 #include <celengine/starcolors.h>
 #include <celengine/rendcontext.h>
-#include "celengine/vertexobject.h"
+#include <celengine/renderlistentry.h>
+#include <celengine/vertexobject.h>
 #if NO_TTF
 #include <celtxf/texturefont.h>
 #else
 #include <celttf/truetypefont.h>
 #endif
-#include <vector>
-#include <list>
-#include <string>
 
 
 class RendererWatcher;
 class FrameTree;
 class ReferenceMark;
 class CurvePlot;
-class AsterismList;
 class Rect;
+class PointStarVertexBuffer;
+class AsterismRenderer;
+class BoundariesRenderer;
 
 struct LightSource
 {
@@ -45,39 +48,6 @@ struct LightSource
     Color color;
     float luminosity;
     float radius;
-};
-
-
-struct RenderListEntry
-{
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
-    enum RenderableType
-    {
-        RenderableStar,
-        RenderableBody,
-        RenderableCometTail,
-        RenderableReferenceMark,
-    };
-
-    union
-    {
-        const Star* star;
-        Body* body;
-        const ReferenceMark* refMark;
-    };
-
-    Eigen::Vector3f position;
-    Eigen::Vector3f sun;
-    float distance;
-    float radius;
-    float centerZ;
-    float nearZ;
-    float farZ;
-    float discSizeInPixels;
-    float appMag;
-    RenderableType renderableType;
-    bool isOpaque;
 };
 
 
@@ -89,8 +59,6 @@ struct SecondaryIlluminator
     float           reflectedIrradiance;  // albedo times total irradiance from direct sources
 };
 
-
-class PointStarVertexBuffer;
 
 class Renderer
 {
@@ -737,8 +705,6 @@ class Renderer
 
     int m_GLStateFlag { 0 };
 
-    celgl::VertexObject markerVO{ GL_ARRAY_BUFFER, 0, GL_STATIC_DRAW };
-
  public:
 #if 0
     struct OrbitSample
@@ -784,6 +750,9 @@ class Renderer
 
     bool videoSync;
     bool settingsChanged;
+
+    AsterismRenderer* m_asterismRenderer { nullptr };
+    BoundariesRenderer* m_boundariesRenderer { nullptr };
 
     // True if we're in between a begin/endObjectAnnotations
     bool objectAnnotationSetOpen;

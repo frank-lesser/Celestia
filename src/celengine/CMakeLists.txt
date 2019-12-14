@@ -1,6 +1,8 @@
 set(CELENGINE_SOURCES
   asterism.cpp
   asterism.h
+  asterismrenderer.cpp
+  asterismrenderer.h
   astro.cpp
   astro.h
   atmosphere.h
@@ -10,6 +12,8 @@ set(CELENGINE_SOURCES
   body.h
   boundaries.cpp
   boundaries.h
+  boundariesrenderer.cpp
+  boundariesrenderer.h
   catalogxref.cpp
   catalogxref.h
   category.cpp
@@ -47,6 +51,7 @@ set(CELENGINE_SOURCES
   globular.h
   glshader.cpp
   glshader.h
+  #hdrfuncrender.cpp
   image.cpp
   image.h
   lightenv.h
@@ -66,11 +71,13 @@ set(CELENGINE_SOURCES
   name.h
   nebula.cpp
   nebula.h
+  objectrenderer.h
   observer.cpp
   observer.h
   octree.h
   opencluster.cpp
   opencluster.h
+  orbitsampler.h
   overlay.cpp
   overlay.h
   overlayimage.cpp
@@ -85,15 +92,20 @@ set(CELENGINE_SOURCES
 #  particlesystem.h
   planetgrid.cpp
   planetgrid.h
+  pointstarrenderer.cpp
+  pointstarrenderer.h
+  pointstarvertexbuffer.cpp
+  pointstarvertexbuffer.h
   rectangle.h
   referencemark.h
   rendcontext.cpp
   rendcontext.h
   render.cpp
+  render.h
   renderglsl.cpp
   renderglsl.h
-  render.h
   renderinfo.h
+  renderlistentry.h
   rotationmanager.cpp
   rotationmanager.h
   selection.cpp
