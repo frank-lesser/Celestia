@@ -9,16 +9,22 @@
 
 #include <cstring>
 #include <cstdarg>
-#include <celutil/utf8.h>
+#include <iostream>
 #include <GL/glew.h>
 #include <Eigen/Core>
 #include <celutil/debug.h>
+#include <celutil/utf8.h>
 #include <celmath/geomutil.h>
 #include "vecgl.h"
 #include "overlay.h"
 #include "rectangle.h"
 #include "render.h"
 #include "texture.h"
+#if NO_TTF
+#include <celtxf/texturefont.h>
+#else
+#include <celttf/truetypefont.h>
+#endif
 
 using namespace std;
 using namespace Eigen;
@@ -41,7 +47,6 @@ void Overlay::begin()
     glLoadIdentity();
     glTranslatef(0.125f, 0.125f, 0);
 
-    glDisable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -77,6 +82,12 @@ void Overlay::beginText()
 {
     glPushMatrix();
     textBlock++;
+    if (font != nullptr)
+    {
+        font->bind();
+        useTexture = true;
+        fontChanged = false;
+    }
 }
 
 void Overlay::endText()
@@ -87,6 +98,7 @@ void Overlay::endText()
         xoffset = 0.0f;
         glPopMatrix();
     }
+    font->unbind();
 }
 
 
@@ -96,7 +108,6 @@ void Overlay::print(wchar_t c)
     {
         if (!useTexture || fontChanged)
         {
-            glEnable(GL_TEXTURE_2D);
             font->bind();
             useTexture = true;
             fontChanged = false;
@@ -128,7 +139,6 @@ void Overlay::print(char c)
     {
         if (!useTexture || fontChanged)
         {
-            glEnable(GL_TEXTURE_2D);
             font->bind();
             useTexture = true;
             fontChanged = false;
@@ -171,7 +181,7 @@ void Overlay::drawRectangle(const Rect& r)
 {
     if (useTexture && r.tex == nullptr)
     {
-        glDisable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, 0);
         useTexture = false;
     }
 
