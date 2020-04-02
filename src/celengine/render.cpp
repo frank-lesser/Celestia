@@ -80,7 +80,7 @@ std::ofstream hdrlog;
 #else
 #include <celttf/truetypefont.h>
 #endif
-#include <GL/glew.h>
+#include "glsupport.h"
 #ifdef VIDEO_SYNC
 #ifdef _WIN32
 #include <GL/wglew.h>
@@ -103,6 +103,7 @@ std::ofstream hdrlog;
 using namespace cmod;
 using namespace Eigen;
 using namespace std;
+using namespace celestia;
 using namespace celmath;
 
 #define FOV           45.0f
@@ -344,6 +345,7 @@ Renderer::Renderer() :
     }
 
     shaderManager = new ShaderManager();
+    m_VertexObjects.fill(nullptr);
 }
 
 
@@ -378,6 +380,9 @@ Renderer::~Renderer()
     delete shaderManager;
     delete m_asterismRenderer;
     delete m_boundariesRenderer;
+
+    for (auto p : m_VertexObjects)
+        delete p;
 }
 
 
@@ -774,7 +779,7 @@ bool Renderer::init(
 #endif
 
 #ifdef ENABLE_SELF_SHADOW
-        if (GLEW_EXT_framebuffer_object)
+        if (gl::EXT_framebuffer_object)
         {
             shadowFbo = new FramebufferObject(1024, 1024, FramebufferObject::DepthAttachment);
             if (!shadowFbo->isValid())
@@ -4410,7 +4415,7 @@ void Renderer::renderPlanet(Body& body,
                     // us explicitly set the LOD. But, they do all have an optional lodBias parameter
                     // for the textureXD instruction. The bias is just the difference between the
                     // area light LOD and the approximate GPU calculated LOD.
-                    if (!GLEW_ARB_shader_texture_lod)
+                    if (!gl::ARB_shader_texture_lod)
                         lod = max(0.0f, lod - gpuLod);
                     lights.ringShadows[li].texLod = lod;
                 }
@@ -6627,7 +6632,7 @@ bool Renderer::captureFrame(int x, int y, int w, int h, Renderer::PixelFormat fo
     return glGetError() == GL_NO_ERROR;
 }
 
-static void drawRectangle(const Renderer &renderer, const Rect &r)
+void Renderer::drawRectangle(const Rect &r)
 {
     uint32_t p = r.tex == nullptr ? 0 : ShaderProperties::HasTexture;
     switch (r.nColors)
@@ -6644,7 +6649,7 @@ static void drawRectangle(const Renderer &renderer, const Rect &r)
         fmt::fprintf(cerr, "Incorrect number of colors: %i\n", r.nColors);
     }
 
-    auto prog = renderer.getShaderManager().getShader(ShaderProperties(p));
+    auto prog = getShaderManager().getShader(ShaderProperties(p));
     if (prog == nullptr)
         return;
 
@@ -6652,7 +6657,7 @@ static void drawRectangle(const Renderer &renderer, const Rect &r)
     array<float, 8> vertices = { r.x, r.y,  r.x+r.w, r.y, r.x+r.w, r.y+r.h, r.x, r.y+r.h };
 
     auto s = static_cast<GLsizeiptr>(memsize(vertices) + memsize(texels) + 4*4*sizeof(GLfloat));
-    static celgl::VertexObject vo{ GL_ARRAY_BUFFER, s, GL_STREAM_DRAW };
+    auto &vo = getVertexObject(VOType::Rectangle, GL_ARRAY_BUFFER, s, GL_STREAM_DRAW);
     vo.bindWritable();
 
     if (!vo.initialized())
@@ -6700,11 +6705,6 @@ static void drawRectangle(const Renderer &renderer, const Rect &r)
     vo.unbind();
 }
 
-void Renderer::drawRectangle(const Rect &r) const
-{
-    ::drawRectangle(*this, r);
-}
-
 void Renderer::setRenderRegion(int x, int y, int width, int height, bool withScissor)
 {
     if (withScissor)
@@ -6719,4 +6719,66 @@ void Renderer::setRenderRegion(int x, int y, int width, int height, bool withSci
 float Renderer::getAspectRatio() const
 {
     return static_cast<float>(windowWidth) / static_cast<float>(windowHeight);
+}
+
+bool Renderer::getInfo(map<string, string>& info) const
+{
+    info["API"] = "OpenGL";
+
+    const char* s;
+    s = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    if (s != nullptr)
+        info["APIVersion"] = s;
+
+    s = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
+    if (s != nullptr)
+        info["Vendor"] = s;
+
+    s = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    if (s != nullptr)
+        info["Renderer"] = s;
+
+    s = reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
+    if (s != nullptr)
+    {
+        info["Language"] = "GLSL";
+        info["LanguageVersion"] = s;
+    }
+
+    GLint maxTextureSize = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+    info["MaxTextureSize"] = to_string(maxTextureSize);
+
+    GLint maxTextureUnits = 1;
+    glGetIntegerv(GL_MAX_TEXTURE_UNITS, &maxTextureUnits);
+    info["MaxTextureUnits"] = to_string(maxTextureUnits);
+
+    GLint pointSizeRange[2];
+    glGetIntegerv(GL_SMOOTH_POINT_SIZE_RANGE, pointSizeRange);
+    info["PointSizeMin"] = to_string(pointSizeRange[0]);
+    info["PointSizeMax"] = to_string(pointSizeRange[1]);
+
+    GLfloat pointSizeGran = 0;
+    glGetFloatv(GL_SMOOTH_POINT_SIZE_GRANULARITY, &pointSizeGran);
+    info["PointSizeGran"] = to_string(pointSizeGran);
+
+    GLint maxCubeMapSize = 0;
+    glGetIntegerv(GL_MAX_CUBE_MAP_TEXTURE_SIZE_ARB, &maxCubeMapSize);
+    info["MaxCubeMapSize"] = to_string(maxCubeMapSize);
+
+    s = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+    if (s != nullptr)
+        info["Extensions"] = s;
+
+    return true;
+}
+
+celgl::VertexObject&
+Renderer::getVertexObject(VOType owner, GLenum type, GLsizeiptr size, GLenum stream)
+{
+    auto i = static_cast<size_t>(owner);
+    if (m_VertexObjects[i] == nullptr)
+        m_VertexObjects[i] = new celgl::VertexObject(type, size, stream);
+
+    return *m_VertexObjects[i];
 }

@@ -10,15 +10,15 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
-#include <cassert>
 #include <config.h>
-#include <celutil/debug.h>
-#include <celmath/mathlib.h>
-#include <celutil/util.h>
+#include <cassert>
 #include <limits>
+#include <celmath/mathlib.h>
 #include <celutil/debug.h>
+#include <celutil/gettext.h>
 #include "astro.h"
 #include "parser.h"
+#include "tokenizer.h"
 #include "texmanager.h"
 #include "meshmanager.h"
 #include "universe.h"
@@ -809,7 +809,7 @@ static Body* CreateBody(const string& name,
     double t;
     if (planetData->getNumber("Albedo", t))
     {
-        fmt::fprintf(cerr, "Deprecated parameter Albedo used in %s definition.\nUse GeomAlbedo instead.", name);
+        fmt::fprintf(cerr, "Deprecated parameter Albedo used in %s definition.\nUse GeomAlbedo instead.\n", name);
         body->setGeomAlbedo((float) t);
     }
 
@@ -821,7 +821,7 @@ static Body* CreateBody(const string& name,
         if (t >= 0.0 && t <= 1.0)
             body->setBondAlbedo((float) t);
         else
-            fmt::fprintf(cerr, "Incorrect BondAlbedo value: %lf", t);
+            fmt::fprintf(cerr, "Incorrect BondAlbedo value: %lf\n", t);
     }
 
     if (planetData->getNumber("Temperature", t))
@@ -1083,8 +1083,10 @@ bool LoadSolarSystemObjects(istream& in,
     Tokenizer tokenizer(&in);
     Parser parser(&tokenizer);
 
+#ifdef ENABLE_NLS
     const char* d = directory.string().c_str();
     bindtextdomain(d, d); // domain name is the same as resource path
+#endif
 
     while (tokenizer.nextToken() != Tokenizer::TokenEnd)
     {

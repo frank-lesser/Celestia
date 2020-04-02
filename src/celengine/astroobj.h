@@ -7,9 +7,21 @@
 
 class UserCategory;
 
-class CatEntry
+class AstroCatalog
 {
+ public:
+    typedef uint32_t IndexNumber;
+    static const IndexNumber InvalidIndex = UINT32_MAX;
+};
+
+class AstroObject
+{
+    AstroCatalog::IndexNumber m_mainIndexNumber { AstroCatalog::InvalidIndex };
 public:
+    AstroCatalog::IndexNumber getIndex() const { return m_mainIndexNumber; }
+    void setIndex(AstroCatalog::IndexNumber);
+
+// Category stuff
     typedef std::unordered_set<UserCategory*> CategorySet;
 
 private:

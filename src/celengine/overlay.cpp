@@ -10,7 +10,7 @@
 #include <cstring>
 #include <cstdarg>
 #include <iostream>
-#include <GL/glew.h>
+#include "glsupport.h"
 #include <Eigen/Core>
 #include <celutil/debug.h>
 #include <celutil/utf8.h>
@@ -30,7 +30,7 @@ using namespace std;
 using namespace Eigen;
 using namespace celmath;
 
-Overlay::Overlay(const Renderer& r) :
+Overlay::Overlay(Renderer& r) :
     ostream(&sbuf),
     renderer(r)
 {

@@ -11,6 +11,7 @@
 // of the License, or (at your option) any later version.
 
 #include <celestia/celestiacore.h>
+#include <celutil/gettext.h>
 #include "qtsolarsystembrowser.h"
 #include "qtinfopanel.h"
 #include "qtcolorswatchwidget.h"
@@ -176,7 +177,7 @@ SolarSystemTreeModel::createTreeItem(Selection sel,
         // Stars may have both a solar system and other stars orbiting
         // them.
         SolarSystemCatalog* solarSystems = universe->getSolarSystemCatalog();
-        auto iter = solarSystems->find(sel.star()->getCatalogNumber());
+        auto iter = solarSystems->find(sel.star()->getIndex());
         if (iter != solarSystems->end())
         {
             sys = iter->second->getPlanets();

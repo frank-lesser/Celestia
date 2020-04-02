@@ -27,19 +27,20 @@
 #include <commdlg.h>
 #include <shellapi.h>
 
+#include <celengine/glsupport.h>
+
 #include <celmath/mathlib.h>
 #include <celutil/debug.h>
-#include <celutil/util.h>
+#include <celutil/gettext.h>
 #include <celutil/winutil.h>
 #include <celutil/filetype.h>
 #include <celengine/astro.h>
 #include <celscript/legacy/cmdparser.h>
-#include <celengine/axisarrow.h>
-#include <celengine/planetgrid.h>
 
-#include <GL/glew.h>
 #include "celestia/celestiacore.h"
 #include "celestia/avicapture.h"
+#include "celestia/helper.h"
+#include "celestia/scriptmenu.h"
 #include "celestia/url.h"
 #include "winstarbrowser.h"
 #include "winssbrowser.h"
@@ -53,13 +54,14 @@
 #include "wintime.h"
 #include "winsplash.h"
 #include "odmenu.h"
-#include "celestia/scriptmenu.h"
 
 #include "res/resource.h"
 #include "wglext.h"
 
 #include <locale.h>
+#include <fmt/printf.h>
 
+using namespace celestia;
 using namespace std;
 
 typedef pair<int,string> IntStrPair;
@@ -408,26 +410,12 @@ static void ShowUniversalTime(CelestiaCore* appCore)
 
 static void ShowLocalTime(CelestiaCore* appCore)
 {
-    TIME_ZONE_INFORMATION tzi;
-    DWORD dst = GetTimeZoneInformation(&tzi);
-    if (dst != TIME_ZONE_ID_INVALID)
+    string tzName;
+    int dstBias;
+    if (GetTZInfo(tzName, dstBias))
     {
-        LONG dstBias = 0;
-        WCHAR* tzName = NULL;
-
-        if (dst == TIME_ZONE_ID_STANDARD)
-        {
-            dstBias = tzi.StandardBias;
-            tzName = tzi.StandardName;
-        }
-        else if (dst == TIME_ZONE_ID_DAYLIGHT)
-        {
-            dstBias = tzi.DaylightBias;
-            tzName = tzi.DaylightName;
-        }
-
-        appCore->setTimeZoneName("   ");
-        appCore->setTimeZoneBias((tzi.Bias + dstBias) * -60);
+        appCore->setTimeZoneName(tzName);
+        appCore->setTimeZoneBias(dstBias);
     }
 }
 
@@ -634,86 +622,8 @@ BOOL APIENTRY GLInfoProc(HWND hDlg,
     {
     case WM_INITDIALOG:
         {
-            const char* vendor = (char*) glGetString(GL_VENDOR);
-            const char* render = (char*) glGetString(GL_RENDERER);
-            const char* version = (char*) glGetString(GL_VERSION);
-            const char* ext = (char*) glGetString(GL_EXTENSIONS);
-            string s;
-            s += UTF8ToCurrentCP(_("Vendor: "));
-            if (vendor != NULL)
-                s += vendor;
-            s += "\r\r\n";
-
-            s += UTF8ToCurrentCP(_("Renderer: "));
-            if (render != NULL)
-                s += render;
-            s += "\r\r\n";
-
-            s += UTF8ToCurrentCP(_("Version: "));
-            if (version != NULL)
-                s += version;
-            s += "\r\r\n";
-
-            if (GLEW_ARB_shading_language_100)
-            {
-                const char* versionString = (const char*) glGetString(GL_SHADING_LANGUAGE_VERSION_ARB);
-                if (versionString != NULL)
-                {
-                    s += UTF8ToCurrentCP(_("GLSL version: "));
-                    s += versionString;
-                    s += "\r\r\n";
-                }
-            }
-
-            char buf[1024];
-            GLint simTextures = 1;
-            if (GLEW_ARB_multitexture)
-                glGetIntegerv(GL_MAX_TEXTURE_UNITS_ARB, &simTextures);
-            sprintf(buf, "%s%d\r\r\n",
-                    UTF8ToCurrentCP(_("Max simultaneous textures: ")).c_str(),
-                    simTextures);
-            s += buf;
-
-            GLint maxTextureSize = 0;
-            glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
-            sprintf(buf, "%s%d\r\r\n",
-                    UTF8ToCurrentCP(_("Max texture size: ")).c_str(),
-                    maxTextureSize);
-            s += buf;
-
-            if (GLEW_EXT_texture_cube_map)
-            {
-                GLint maxCubeMapSize = 0;
-                glGetIntegerv(GL_MAX_CUBE_MAP_TEXTURE_SIZE_ARB, &maxCubeMapSize);
-                sprintf(buf, "%s%d\r\r\n",
-                        UTF8ToCurrentCP(_("Max cube map size: ")).c_str(),
-                        maxTextureSize);
-                s += buf;
-            }
-
-            GLfloat pointSizeRange[2];
-            glGetFloatv(GL_POINT_SIZE_RANGE, pointSizeRange);
-            sprintf(buf, "%s%f - %f\r\r\n",
-                    UTF8ToCurrentCP(_("Point size range: ")).c_str(),
-                    pointSizeRange[0], pointSizeRange[1]);
-            s += buf;
-
-            s += "\r\r\n";
-            s += UTF8ToCurrentCP(_("Supported Extensions:")).c_str();
-            s += "\r\r\n";
-
-            if (ext != NULL)
-            {
-                string extString(ext);
-                int pos = extString.find(' ', 0);
-                while (pos != string::npos)
-                {
-                    extString.replace(pos, 1, "\r\r\n");
-                    pos = extString.find(' ', pos);
-                }
-                s += extString;
-            }
-
+            string s = Helper::getRenderInfo(appCore->getRenderer());
+            s = UTF8ToCurrentCP(s);
             SetDlgItemText(hDlg, IDC_GLINFO_TEXT, s.c_str());
         }
         return(TRUE);
@@ -1398,10 +1308,14 @@ BOOL APIENTRY SelectDisplayModeProc(HWND hDlg,
             HWND hwnd = GetDlgItem(hDlg, IDC_COMBO_RESOLUTION);
 
             // Add windowed mode as the first item on the menu
+#ifdef ENABLE_NLS
             bind_textdomain_codeset("celestia", CurrentCP());
+#endif
             SendMessage(hwnd, CB_INSERTSTRING, -1,
                         reinterpret_cast<LPARAM>(_("Windowed Mode")));
+#ifdef ENABLE_NLS
             bind_textdomain_codeset("celestia", "UTF8");
+#endif
 
             for (vector<DEVMODE>::const_iterator iter= displayModes->begin();
                  iter != displayModes->end(); iter++)
@@ -1674,7 +1588,7 @@ VOID APIENTRY handlePopupMenu(HWND hwnd,
             AppendMenu(hMenu, MF_STRING, ID_INFO, UTF8ToCurrentCP(_("&Info")).c_str());
 
             SolarSystemCatalog* solarSystemCatalog = sim->getUniverse()->getSolarSystemCatalog();
-            SolarSystemCatalog::iterator iter = solarSystemCatalog->find(sel.star()->getCatalogNumber());
+            SolarSystemCatalog::iterator iter = solarSystemCatalog->find(sel.star()->getIndex());
             if (iter != solarSystemCatalog->end())
             {
                 SolarSystem* solarSys = iter->second;
@@ -1759,7 +1673,7 @@ void ShowWWWInfo(const Selection& sel)
             if (url.empty())
             {
                 char name[32];
-                sprintf(name, "HIP%d", sel.star()->getCatalogNumber() & ~0xf0000000);
+                sprintf(name, "HIP%d", sel.star()->getIndex() & ~Star::MaxTychoCatalogNumber);
                 url = string("http://simbad.u-strasbg.fr/sim-id.pl?protocol=html&Ident=") + name;
             }
         }
@@ -2033,10 +1947,11 @@ HWND CreateOpenGLWindow(int x, int y, int width, int height,
 
     if (firstContext)
     {
-        GLenum glewErr = glewInit();
-        if (glewErr != GLEW_OK)
+        if (!gl::init() || !gl::checkVersion(gl::GL_2_1))
         {
-            MessageBox(NULL, "Could not set up OpenGL extensions.", "Fatal Error",
+            MessageBox(NULL,
+                       _("You system doesn't support OpenGL 2.1!"),
+                       "Fatal Error",
                        MB_OK | MB_ICONERROR);
             return NULL;
         }
@@ -3185,7 +3100,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
     if (startDirectory != "")
         SetCurrentDirectory(startDirectory.c_str());
 
-    s_splash = new SplashWindow("splash.png");
+    s_splash = new SplashWindow(SPLASH_DIR "\\" "splash.png");
     s_splash->setMessage("Loading data files...");
     if (!skipSplashScreen)
         s_splash->showSplash();
@@ -3290,6 +3205,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
     // Gettext integration
     setlocale(LC_ALL, "");
     setlocale(LC_NUMERIC, "C");
+#ifdef ENABLE_NLS
     bindtextdomain("celestia","locale");
     bind_textdomain_codeset("celestia", "UTF-8");
     bindtextdomain("celestia_constellations","locale");
@@ -3306,6 +3222,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
         cout << "Couldn't load localized resources: "<< res<< "\n";
         hRes = hInstance;
     }
+#endif
 
     appCore->setAlerter(new WinAlerter());
 
@@ -3329,8 +3246,6 @@ int APIENTRY WinMain(HINSTANCE hInstance,
     if (!initSucceeded)
         return 1;
 
-    appCore->getRenderer()->setSolarSystemMaxDistance(appCore->getConfig()->SolarSystemMaxDistance);
-
     if (startURL != "")
         appCore->setStartURL(startURL);
 
@@ -3346,6 +3261,8 @@ int APIENTRY WinMain(HINSTANCE hInstance,
             hDefaultCursor = LoadCursor(hRes, MAKEINTRESOURCE(IDC_CROSSHAIR));
         else
             hDefaultCursor = LoadCursor(hRes, MAKEINTRESOURCE(IDC_CROSSHAIR_OPAQUE));
+
+        appCore->getRenderer()->setSolarSystemMaxDistance(appCore->getConfig()->SolarSystemMaxDistance);
     }
 
     cursorHandler = new WinCursorHandler(hDefaultCursor);
@@ -3454,22 +3371,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 
     bReady = true;
 
-    // Get the current time
-    time_t systime = time(NULL);
-    struct tm *gmt = gmtime(&systime);
-    double timeTDB = astro::J2000;
-    if (gmt != NULL)
-    {
-        astro::Date d;
-        d.year = gmt->tm_year + 1900;
-        d.month = gmt->tm_mon + 1;
-        d.day = gmt->tm_mday;
-        d.hour = gmt->tm_hour;
-        d.minute = gmt->tm_min;
-        d.seconds = (int) gmt->tm_sec;
-        timeTDB = astro::UTCtoTDB(d);
-    }
-    appCore->start(timeTDB);
+    appCore->start();
 
     if (startURL != "")
     {

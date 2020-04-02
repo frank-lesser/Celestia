@@ -11,7 +11,7 @@
 #include <celutil/util.h>
 #include <celcompat/filesystem.h>
 #include "shadermanager.h"
-#include <GL/glew.h>
+#include "glsupport.h"
 #include <cmath>
 #include <iostream>
 #include <fstream>
@@ -21,11 +21,12 @@
 #include <cassert>
 #include <Eigen/Geometry>
 
+using namespace celestia;
 using namespace Eigen;
 using namespace std;
 
 // GLSL on Mac OS X appears to have a bug that precludes us from using structs
-// #define USE_GLSL_STRUCTS
+#define USE_GLSL_STRUCTS
 #define POINT_FADE 0
 
 enum ShaderVariableType
@@ -964,11 +965,10 @@ static string
 DeclareLights(const ShaderProperties& props)
 {
     if (props.nLights == 0)
-        return string("");
+        return {};
 
-#ifndef USE_GLSL_STRUCTS
     ostringstream stream;
-
+#ifndef USE_GLSL_STRUCTS
     for (unsigned int i = 0; i < props.nLights; i++)
     {
         stream << "uniform vec3 light" << i << "_direction;\n";
@@ -990,7 +990,7 @@ DeclareLights(const ShaderProperties& props)
     stream << "   vec3 halfVector;\n";
     if (props.texUsage & ShaderProperties::NightTexture)
         stream << "   float brightness;\n";
-    stream << "} lights[%d];\n";
+    stream << "} lights[" << props.nLights << "];\n";
 #endif
 
     return stream.str();
@@ -1221,7 +1221,7 @@ BeginLightSourceShadows(const ShaderProperties& props, unsigned int light)
 
     if (props.hasRingShadowForLight(light))
     {
-        if (GLEW_ARB_shader_texture_lod)
+        if (gl::ARB_shader_texture_lod)
         {
             source += mulAssign("shadow",
                       (1.0f - texture2DLod(sampler2D("ringTex"), vec2(ringShadowTexCoord(light), 0.0f), indexedUniform("ringShadowLOD", light))["a"]));
@@ -1606,13 +1606,6 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
         source += ScatteringConstantDeclarations(props);
     }
 
-    if (props.isViewDependent() || props.hasScattering())
-    {
-        source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
-        if (!props.usesTangentSpaceLighting())
-            source += "float NV = dot(gl_Normal, eyeDir);\n";
-    }
-
     if (props.texUsage & ShaderProperties::PointSprite)
     {
         source += DeclareUniform("pointScale", Shader_Float);
@@ -1649,7 +1642,6 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
         if (props.lightModel == ShaderProperties::SpecularModel)
         {
             source += "varying vec4 specFactors;\n";
-            source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
         }
     }
     else
@@ -1660,7 +1652,6 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
         if (props.lightModel == ShaderProperties::SpecularModel)
         {
             source += "varying vec4 spec;\n";
-            source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
         }
     }
 
@@ -1715,6 +1706,19 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
 
     // Begin main() function
     source += "\nvoid main(void)\n{\n";
+    if (props.isViewDependent() || props.hasScattering())
+    {
+        source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
+        if (!props.usesTangentSpaceLighting())
+        {
+            source += "float NV = dot(gl_Normal, eyeDir);\n";
+        }
+    }
+    else if (props.lightModel == ShaderProperties::SpecularModel)
+    {
+        source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
+    }
+
     source += "float NL;\n";
     if (props.lightModel == ShaderProperties::SpecularModel)
     {
@@ -1818,13 +1822,14 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
     if (props.hasRingShadows())
     {
         source += "vec3 ringShadowProj;\n";
+        source += "float t = -(dot(gl_Vertex.xyz, ringPlane.xyz) + ringPlane.w);\n";
         for (unsigned int j = 0; j < props.nLights; j++)
         {
             if (props.hasRingShadowForLight(j))
             {
                 source += "ringShadowProj = gl_Vertex.xyz + " +
                   LightProperty(j, "direction") +
-                  " * max(0.0, -(dot(gl_Vertex.xyz, ringPlane.xyz) + ringPlane.w) / dot(" +
+                  " * max(0.0, t / dot(" +
                   LightProperty(j, "direction") + ", ringPlane.xyz));\n";
 
                 source += RingShadowTexCoord(j) +
@@ -1914,7 +1919,7 @@ ShaderManager::buildFragmentShader(const ShaderProperties& props)
 
     // Without GL_ARB_shader_texture_lod enabled one can use texture2DLod
     // in vertext shaders only
-    if (GLEW_ARB_shader_texture_lod)
+    if (gl::ARB_shader_texture_lod)
         source += "#extension GL_ARB_shader_texture_lod : enable\n";
 
     string diffTexCoord("diffTexCoord");
@@ -1938,7 +1943,6 @@ ShaderManager::buildFragmentShader(const ShaderProperties& props)
     {
         source += "uniform vec3 ambientColor;\n";
         source += "uniform float opacity;\n";
-        source += "vec4 diff = vec4(ambientColor, opacity);\n";
         if (props.isViewDependent())
         {
             if (props.lightModel == ShaderProperties::SpecularModel)
@@ -1978,7 +1982,6 @@ ShaderManager::buildFragmentShader(const ShaderProperties& props)
         source += "uniform vec3 ambientColor;\n";
         source += "uniform float opacity;\n";
         source += "varying vec4 diffFactors;\n";
-        source += "vec4 diff = vec4(ambientColor, opacity);\n";
         source += "varying vec3 normal;\n";
         source += "vec4 spec = vec4(0.0);\n";
         source += "uniform float shininess;\n";
@@ -1994,7 +1997,6 @@ ShaderManager::buildFragmentShader(const ShaderProperties& props)
     {
         source += "uniform vec3 ambientColor;\n";
         source += "uniform float opacity;\n";
-        source += "vec4 diff = vec4(ambientColor, opacity);\n";
         source += "varying vec4 diffFactors;\n";
         if (props.lightModel == ShaderProperties::SpecularModel)
         {
@@ -2081,6 +2083,12 @@ ShaderManager::buildFragmentShader(const ShaderProperties& props)
 
     source += "\nvoid main(void)\n{\n";
     source += "vec4 color;\n";
+    if (props.usesTangentSpaceLighting() ||
+        props.lightModel == ShaderProperties::PerPixelSpecularModel ||
+        props.usesShadows())
+    {
+        source += "vec4 diff = vec4(ambientColor, opacity);\n";
+    }
 
     if (props.usesShadows())
     {
@@ -2236,7 +2244,7 @@ ShaderManager::buildFragmentShader(const ShaderProperties& props)
     if (props.texUsage & ShaderProperties::DiffuseTexture)
     {
         if (props.texUsage & ShaderProperties::PointSprite)
-            source += "color = texture2D(diffTex, gl_TexCoord[0].st);\n";
+            source += "color = texture2D(diffTex, gl_PointCoord);\n";
         else
             source += "color = texture2D(diffTex, " + diffTexCoord + ".st);\n";
     }
@@ -2636,15 +2644,14 @@ ShaderManager::buildAtmosphereVertexShader(const ShaderProperties& props)
         source += "varying vec3 " + ScatteredColor(i) + ";\n";
     }
 
-    source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
-    source += "float NV = dot(gl_Normal, eyeDir);\n";
-
     source += "varying vec3 scatterEx;\n";
     source += "varying vec3 eyeDir_obj;\n";
 
     // Begin main() function
     source += "\nvoid main(void)\n{\n";
     source += "float NL;\n";
+    source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
+    source += "float NV = dot(gl_Normal, eyeDir);\n";
 
     source += AtmosphericEffects(props);
 
@@ -2674,10 +2681,15 @@ ShaderManager::buildAtmosphereFragmentShader(const ShaderProperties& props)
     source += "uniform vec3  rayleighCoeff;\n";
     source += "uniform vec3  invScatterCoeffSum;\n";
 
+#ifdef USE_GLSL_STRUCTS
+    source += DeclareLights(props);
+#endif
     unsigned int i;
     for (i = 0; i < props.nLights; i++)
     {
+#ifndef USE_GLSL_STRUCTS
         source += "uniform vec3 " + LightProperty(i, "direction") + ";\n";
+#endif
         source += "varying vec3 " + ScatteredColor(i) + ";\n";
     }
 
@@ -2806,7 +2818,10 @@ ShaderManager::buildEmissiveFragmentShader(const ShaderProperties& props)
 
     if (props.texUsage & ShaderProperties::DiffuseTexture)
     {
-        source += "    gl_FragColor = " + colorSource + " * texture2D(diffTex, gl_TexCoord[0].st);\n";
+        if (props.texUsage & ShaderProperties::PointSprite)
+            source += "    gl_FragColor = " + colorSource + " * texture2D(diffTex, gl_PointCoord);\n";
+        else
+            source += "    gl_FragColor = " + colorSource + " * texture2D(diffTex, gl_TexCoord[0].st);\n";
     }
     else
     {
@@ -2877,14 +2892,6 @@ ShaderManager::buildParticleVertexShader(const ShaderProperties& props)
     source << "    float brightness = 1.0;\n";
 #endif
 
-    // Optional texture coordinates (generated automatically for point
-    // sprites.)
-    if ((props.texUsage & ShaderProperties::DiffuseTexture) &&
-        !(props.texUsage & ShaderProperties::PointSprite))
-    {
-        source << "    gl_TexCoord[0].st = " << TexCoord2D(0) << ";\n";
-    }
-
     // Set the color. Should *always* use vertex colors for color and opacity.
     source << "    gl_FrontColor = gl_Color * brightness;\n";
 
@@ -2953,7 +2960,7 @@ ShaderManager::buildParticleFragmentShader(const ShaderProperties& props)
 
     if (props.texUsage & ShaderProperties::DiffuseTexture)
     {
-        source << "    gl_FragColor = gl_Color * texture2D(diffTex, gl_TexCoord[0].st);\n";
+        source << "    gl_FragColor = gl_Color * texture2D(diffTex, gl_PointCoord);\n";
     }
     else
     {

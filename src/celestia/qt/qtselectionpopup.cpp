@@ -16,6 +16,7 @@
 #include <celestia/helper.h>
 #include <celengine/axisarrow.h>
 #include <celengine/planetgrid.h>
+#include <celutil/gettext.h>
 #include <fmt/printf.h>
 #include "qtselectionpopup.h"
 #include "qtappwin.h"
@@ -206,7 +207,7 @@ SelectionPopup::SelectionPopup(const Selection& sel,
     {
         // Child object menus for star
         SolarSystemCatalog* solarSystemCatalog = sim->getUniverse()->getSolarSystemCatalog();
-        SolarSystemCatalog::iterator iter = solarSystemCatalog->find(selection.star()->getCatalogNumber());
+        SolarSystemCatalog::iterator iter = solarSystemCatalog->find(selection.star()->getIndex());
         if (iter != solarSystemCatalog->end())
         {
             SolarSystem* solarSys = iter->second;
@@ -544,7 +545,7 @@ void SelectionPopup::slotSelectChildObject()
             else if (selection.star())
             {
                 SolarSystemCatalog* solarSystemCatalog = sim->getUniverse()->getSolarSystemCatalog();
-                SolarSystemCatalog::iterator iter = solarSystemCatalog->find(selection.star()->getCatalogNumber());
+                SolarSystemCatalog::iterator iter = solarSystemCatalog->find(selection.star()->getIndex());
                 if (iter != solarSystemCatalog->end())
                 {
                     SolarSystem* solarSys = iter->second;

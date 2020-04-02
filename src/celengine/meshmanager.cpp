@@ -21,6 +21,7 @@
 #include "texmanager.h"
 #include "meshmanager.h"
 #include "modelgeometry.h"
+#include "tokenizer.h"
 
 #include <cel3ds/3dsread.h>
 #include <celmodel/modelfile.h>
@@ -29,13 +30,13 @@
 #include <celmath/perlin.h>
 #include <celutil/debug.h>
 #include <celutil/filetype.h>
-#include <celutil/util.h>
+#include <celutil/debug.h>
+#include <celutil/gettext.h>
 
 #include <iostream>
 #include <fstream>
 #include <cassert>
 #include <utility>
-#include <celutil/debug.h>
 #include <memory>
 
 

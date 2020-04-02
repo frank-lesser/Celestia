@@ -11,6 +11,7 @@
 // of the License, or (at your option) any later version.
 
 #include <celestia/celestiacore.h>
+#include <celutil/gettext.h>
 #include "qtcelestialbrowser.h"
 #include "qtcolorswatchwidget.h"
 #include "qtinfopanel.h"
@@ -28,6 +29,7 @@
 #include <QLineEdit>
 #include <QRegExp>
 #include <QFontMetrics>
+#include <QCollator>
 #include <vector>
 #include <set>
 
@@ -72,6 +74,7 @@ private:
     Vector3f pos;
     UniversalCoord ucPos;
     const Universe* universe;
+    QCollator coll;
 };
 
 
@@ -188,9 +191,9 @@ QVariant StarTableModel::data(const QModelIndex& index, int role) const
         {
         case NameColumn:
             {
-                uint32_t hipCatNo = star->getCatalogNumber();
-                uint32_t hdCatNo  = universe->getStarCatalog()->crossIndex(StarDatabase::HenryDraper, hipCatNo);
-                if (hdCatNo != Star::InvalidCatalogNumber)
+                auto hipCatNo = star->getIndex();
+                auto hdCatNo  = universe->getStarCatalog()->crossIndex(StarDatabase::HenryDraper, hipCatNo);
+                if (hdCatNo != AstroCatalog::InvalidIndex)
                     return QString("HD %1").arg(hdCatNo);
                 else
                     return QVariant();
@@ -259,6 +262,7 @@ StarPredicate::StarPredicate(Criterion _criterion,
     universe(_universe)
 {
     pos = ucPos.toLy().cast<float>();
+    coll.setNumericMode(true);
 }
 
 
@@ -293,7 +297,8 @@ bool StarPredicate::operator()(const Star* star0, const Star* star1) const
         return strcmp(star0->getSpectralType(), star1->getSpectralType()) < 0;
 
     case Alphabetical:
-        return strcmp(universe->getStarCatalog()->getStarName(*star0, true).c_str(), universe->getStarCatalog()->getStarName(*star1, true).c_str()) < 0;
+        return coll.compare(universe->getStarCatalog()->getStarName(*star0, true).c_str(),
+                            universe->getStarCatalog()->getStarName(*star1, true).c_str()) < 0;
 
     default:
         return false;
@@ -321,14 +326,14 @@ bool StarFilterPredicate::operator()(const Star* star) const
         if (solarSystems == nullptr)
             return true;
 
-        SolarSystemCatalog::iterator iter = solarSystems->find(star->getCatalogNumber());
+        SolarSystemCatalog::iterator iter = solarSystems->find(star->getIndex());
         if (iter == solarSystems->end())
             return true;
     }
 
     if (multipleFilterEnabled)
     {
-        if (!star->getOrbitBarycenter() || star->getCatalogNumber() == 0)
+        if (!star->getOrbitBarycenter() || star->getIndex() == 0)
             return true;
     }
 

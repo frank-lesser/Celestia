@@ -15,21 +15,17 @@
 #include <fstream>
 #include <iostream>
 
-extern "C" {
-#include <jpeglib.h>
-}
-#include <png.h>
+#include <Eigen/Core>
+#include "glsupport.h"
 
 #include <celutil/filetype.h>
 #include <celutil/debug.h>
-#include <celutil/util.h>
-#include <Eigen/Core>
-#include <GL/glew.h>
-#include <celutil/debug.h>
+#include <celutil/gettext.h>
 #include "texture.h"
 #include "virtualtex.h"
 
 
+using namespace celestia;
 using namespace Eigen;
 using namespace std;
 
@@ -44,6 +40,26 @@ struct TextureCaps
 
 static TextureCaps texCaps;
 
+#define NO_GLU
+#undef DUMP_TEXTURE_MIPMAP_INFO
+
+#ifdef DUMP_TEXTURE_MIPMAP_INFO
+static void DumpTextureMipmapInfo(GLenum target)
+{
+    for (int i = 0; i < 16; i++)
+    {
+        GLint w = 0, h = 0;
+        glGetTexLevelParameteriv(target, i, GL_TEXTURE_HEIGHT, &h);
+        if (glGetError() != GL_NO_ERROR) break;
+        glGetTexLevelParameteriv(target, i, GL_TEXTURE_WIDTH, &w);
+        if (glGetError() != GL_NO_ERROR) break;
+        if (w == 0 || h == 0) break;
+        cout << w << 'x' << h << '\n';
+    }
+}
+#else
+#define DumpTextureMipmapInfo(target) (void)target
+#endif
 
 static bool testMaxLevel()
 {
@@ -79,7 +95,7 @@ static const TextureCaps& GetTextureCaps()
         glGetIntegerv(GL_MAX_TEXTURE_SIZE, &texCaps.maxTextureSize);
 
         texCaps.preferredAnisotropy = 1;
-        if (GLEW_EXT_texture_filter_anisotropic)
+        if (gl::EXT_texture_filter_anisotropic)
         {
             GLint maxAnisotropy = 1;
             glGetIntegerv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAnisotropy);
@@ -373,7 +389,7 @@ ImageTexture::ImageTexture(Image& img,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
                     mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
 
-    if (GLEW_EXT_texture_filter_anisotropic && texCaps.preferredAnisotropy > 1)
+    if (gl::EXT_texture_filter_anisotropic && texCaps.preferredAnisotropy > 1)
     {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, texCaps.preferredAnisotropy);
     }
@@ -382,6 +398,12 @@ ImageTexture::ImageTexture(Image& img,
         glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
 
     int internalFormat = getInternalFormat(img.getFormat());
+    bool genMipmaps = mipmap && !precomputedMipMaps;
+
+#ifdef NO_GLU
+    if (genMipmaps && !gl::EXT_framebuffer_object)
+        glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
+#endif
 
     if (mipmap)
     {
@@ -391,12 +413,16 @@ ImageTexture::ImageTexture(Image& img,
         }
         else if (mipMapMode == DefaultMipMaps)
         {
+#ifdef NO_GLU
+            LoadMiplessTexture(img, GL_TEXTURE_2D);
+#else
             gluBuild2DMipmaps(GL_TEXTURE_2D,
                               internalFormat,
                               getWidth(), getHeight(),
                               (GLenum) img.getFormat(),
                               GL_UNSIGNED_BYTE,
                               img.getPixels());
+#endif
         }
         else
         {
@@ -408,6 +434,11 @@ ImageTexture::ImageTexture(Image& img,
     {
         LoadMiplessTexture(img, GL_TEXTURE_2D);
     }
+#ifdef NO_GLU
+    if (genMipmaps && gl::EXT_framebuffer_object)
+        glGenerateMipmapEXT(GL_TEXTURE_2D);
+#endif
+    DumpTextureMipmapInfo(GL_TEXTURE_2D);
 
     alpha = img.hasAlpha();
     compressed = img.isCompressed();
@@ -508,7 +539,7 @@ TiledTexture::TiledTexture(Image& img,
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
                             mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
-            if (GLEW_EXT_texture_filter_anisotropic && texCaps.preferredAnisotropy > 1)
+            if (gl::EXT_texture_filter_anisotropic && texCaps.preferredAnisotropy > 1)
             {
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, texCaps.preferredAnisotropy);
             }
@@ -588,17 +619,31 @@ TiledTexture::TiledTexture(Image& img,
 
                 if (mipmap)
                 {
+#ifdef NO_GLU
+                    if (gl::EXT_framebuffer_object)
+                    {
+                        LoadMiplessTexture(*tile, GL_TEXTURE_2D);
+                        glGenerateMipmapEXT(GL_TEXTURE_2D);
+                    }
+                    else
+                    {
+                        glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
+                        LoadMiplessTexture(*tile, GL_TEXTURE_2D);
+                    }
+#else
                     gluBuild2DMipmaps(GL_TEXTURE_2D,
                                       internalFormat,
                                       tileWidth, tileHeight,
                                       (GLenum) tile->getFormat(),
                                       GL_UNSIGNED_BYTE,
                                       tile->getPixels());
+#endif
                 }
                 else
                 {
                     LoadMiplessTexture(*tile, GL_TEXTURE_2D);
                 }
+                DumpTextureMipmapInfo(GL_TEXTURE_2D);
             }
         }
     }
@@ -702,6 +747,12 @@ CubeMap::CubeMap(Image* faces[]) :
                     mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
 
     int internalFormat = getInternalFormat(format);
+    bool genMipmaps = mipmap && !precomputedMipMaps;
+
+#ifdef NO_GLU
+    if (genMipmaps && !gl::EXT_framebuffer_object)
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_GENERATE_MIPMAP, GL_TRUE);
+#endif
 
     for (i = 0; i < 6; i++)
     {
@@ -716,12 +767,16 @@ CubeMap::CubeMap(Image* faces[]) :
             }
             else
             {
+#ifdef NO_GLU
+                LoadMiplessTexture(*face, targetFace);
+#else
                 gluBuild2DMipmaps(targetFace,
                                   internalFormat,
                                   getWidth(), getHeight(),
                                   (GLenum) face->getFormat(),
                                   GL_UNSIGNED_BYTE,
                                   face->getPixels());
+#endif
             }
         }
         else
@@ -729,6 +784,11 @@ CubeMap::CubeMap(Image* faces[]) :
             LoadMiplessTexture(*face, targetFace);
         }
     }
+#ifdef NO_GLU
+    if (genMipmaps && gl::EXT_framebuffer_object)
+        glGenerateMipmapEXT(GL_TEXTURE_CUBE_MAP);
+#endif
+    DumpTextureMipmapInfo(GL_TEXTURE_CUBE_MAP_POSITIVE_X);
 }
 
 

@@ -42,6 +42,7 @@
 #include <vector>
 #include <string>
 #include <cassert>
+#include <celutil/gettext.h>
 #include "qtappwin.h"
 #include "qtglwidget.h"
 #include "qtpreferencesdialog.h"
@@ -73,6 +74,7 @@
 #define CONFIG_DATA_DIR "./"
 #endif
 
+using namespace celestia;
 using namespace std;
 
 
@@ -256,11 +258,10 @@ void CelestiaAppWindow::init(const QString& qConfigFileName,
     glWidget = new CelestiaGlWidget(nullptr, "Celestia", m_appCore);
     glWidget->makeCurrent();
 
-    GLenum glewErr = glewInit();
-    if (glewErr != GLEW_OK)
+    if (!gl::init() || !gl::checkVersion(gl::GL_2_1))
     {
-        QMessageBox::critical(0, "Celestia",
-                              QString(_("Celestia was unable to initialize OpenGL extensions (error %1). Graphics quality will be reduced.")).arg(glewErr));
+        QMessageBox::critical(0, "Celestia", _("Celestia was unable to initialize OpenGL 2.1."));
+	exit(1);
     }
 
     m_appCore->setCursorHandler(glWidget);
@@ -742,7 +743,7 @@ void CelestiaAppWindow::slotCopyURL()
 
     Url url(appState, Url::CurrentVersion);
     QApplication::clipboard()->setText(url.getAsString().c_str());
-    m_appCore->flash(QString(_("Copied URL")).toStdString());
+    m_appCore->flash(_("Copied URL"));
 }
 
 
@@ -751,8 +752,8 @@ void CelestiaAppWindow::slotPasteURL()
     QString urlText = QApplication::clipboard()->text();
     if (!urlText.isEmpty())
     {
-        m_appCore->goToUrl(urlText.toStdString());
-        m_appCore->flash(QString(_("Pasting URL")).toStdString());
+        if (m_appCore->goToUrl(urlText.toStdString()))
+            m_appCore->flash(_("Pasting URL"));
     }
 }
 
@@ -1002,23 +1003,52 @@ void CelestiaAppWindow::slotManual()
 
 void CelestiaAppWindow::slotShowAbout()
 {
-    static const char* aboutText =
-    gettext_noop("<html>"
-    "<p><b>Celestia 1.7.0 (Qt5 beta version, git commit %1)</b></p>"
-    "<p>Copyright (C) 2001-2018 by the Celestia Development Team. Celestia "
-    "is free software. You can redistribute it and/or modify it under the "
-    "terms of the GNU General Public License version&nbsp;2.</p>"
-    "<b>Celestia on the web</b>"
-    "<br>"
-    "Main site: <a href=\"https://celestia.space/\">"
-    "https://celestia.space/</a><br>"
-    "Forum: <a href=\"https://celestia.space/forum/\">"
-    "https://celestia.space/forum/</a><br>"
-    "GitHub project: <a href=\"https://github.com/CelestiaProject/Celestia\">"
-    "https://github.com/CelestiaProject/Celestia</a><br>"
-    "</html>");
+    const char* aboutText = gettext_noop(
+        "<html>"
+        "<h1>Celestia 1.7</h1>"
+        "<p>Development snapshot, commit <b>%1</b>.</p>"
 
-    QMessageBox::about(this, "Celestia", QString(_(aboutText)).arg(GIT_COMMIT));
+        "<p>Built for %2 bit CPU<br>"
+        "Using %3 %4<br>"
+        "Built against Qt library: %5<br>"
+        "NAIF kerners are %7<br>"
+        "Runtime Qt version: %6</p>"
+
+        "<p>Copyright (C) 2001-2020 by the Celestia Development Team.<br>"
+        "Celestia is free software. You can redistribute it and/or modify "
+        "it under the terms of the GNU General Public License as published "
+        "by the Free Software Foundation; either version 2 of the License, "
+        "or (at your option) any later version.</p>"
+
+        "<p>Main site: <a href=\"https://celestia.space/\">"
+        "https://celestia.space/</a><br>"
+        "Forum: <a href=\"https://celestia.space/forum/\">"
+        "https://celestia.space/forum/</a><br>"
+        "GitHub project: <a href=\"https://github.com/CelestiaProject/Celestia\">"
+        "https://github.com/CelestiaProject/Celestia</a></p>"
+        "</html>"
+    );
+
+    auto qAboutText = QString(_(aboutText))
+                                .arg(GIT_COMMIT)
+                                .arg(QSysInfo::WordSize)
+#if defined(_MSC_VER)
+                                .arg("MSVC").arg(_MSC_FULL_VER)
+#elif defined(__clang_version__)
+                                .arg("Clang").arg(__clang_version__)
+#elif defined(__GNUC__)
+                                .arg("GNU GCC").arg(__VERSION__)
+#else
+                                .arg(_("Unknown compiler")).arg("")
+#endif
+                                .arg(QT_VERSION_STR, qVersion())
+#if defined(USE_SPICE)
+                                .arg(_("supported"))
+#else
+                                .arg(_("not supported"))
+#endif
+    ;
+        QMessageBox::about(this, _("About Celestia"), qAboutText);
 }
 
 
@@ -1029,52 +1059,89 @@ void CelestiaAppWindow::slotShowGLInfo()
     QString infoText;
     QTextStream out(&infoText, QIODevice::WriteOnly);
 
+    map<string, string> info;
+    m_appCore->getRenderer()->getInfo(info);
+
     // Get the version string
     // QTextStream::operator<<(const char *string) assumes that the string has
     // ISO-8859-1 encoding, so we need to convert in to QString
-    out << QString(_("<b>OpenGL version: </b>"));
-    const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
-    if (version != nullptr)
-        out << version;
-    else
-        out << "???";
-    out << "<br>\n";
-
-    out << QString(_("<b>Renderer: </b>"));
-    const char* glrenderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
-    if (glrenderer != nullptr)
-        out << glrenderer;
-    out << "<br>\n";
-
-    // shading language version
-    const char* glslversion = reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
-    if (glslversion != nullptr)
+    if (info.count("API") > 0 && info.count("APIVersion") > 0)
     {
-        out << QString(_("<b>GLSL Version: </b>")) << glslversion << "<br>\n";
+        out << QString(_("<b>%1 version:</b> %2")).arg(info["API"].c_str(), info["APIVersion"].c_str());
+        out << "<br>\n";
     }
 
-    // texture size
-    GLint maxTextureSize = 0;
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
-    out << QString(_("<b>Maximum texture size: </b>")) << maxTextureSize << "<br>\n";
+    if (info.count("Vendor") > 0)
+    {
+        out << QString(_("<b>Vendor</b>: %1")).arg(info["Vendor"].c_str());
+        out << "<br>\n";
+    }
+
+    if (info.count("Renderer") > 0)
+    {
+        out << QString(_("<b>Renderer:</b> %1")).arg(info["Renderer"].c_str());
+        out << "<br>\n";
+    }
+
+    // shading language version
+    if (info.count("Language") > 0)
+    {
+        out << QString(_("<b>%1 Version:</b> %2")).arg(info["Language"].c_str(), info["LanguageVersion"].c_str());
+        out << "<br>\n";
+    }
+
+    // textures
+    if (info.count("MaxTextureUnits") > 0)
+    {
+        out << QString(_("<b>Max simultaneous textures:</b> %1")).arg(info["MaxTextureUnits"].c_str());
+        out << "<br>\n";
+    }
+
+    if (info.count("MaxTextureSize") > 0)
+    {
+        out << QString(_("<b>Maximum texture size:</b> %1")).arg(info["MaxTextureSize"].c_str());
+        out << "<br>\n";
+    }
+
+    if (info.count("PointSizeMax") > 0 && info.count("PointSizeMin") > 0)
+    {
+        out << QString(_("<b>Point size range</b>: %1 - %2")).arg(info["PointSizeMin"].c_str(), info["PointSizeMax"].c_str());
+        out << "<br>\n";
+    }
+
+    if (info.count("PointSizeGran") > 0)
+    {
+        out << QString(_("<b>Point size granularity</b>: %1")).arg(info["PointSizeGran"].c_str());
+        out << "<br>\n";
+    }
+
+    if (info.count("MaxCubeMapSize") > 0)
+    {
+        out << QString(_("<b>Max cube map size</b>: %1")).arg(info["MaxCubeMapSize"].c_str());
+        out << "<br>\n";
+    }
+
 
     out << "<br>\n";
 
     // Show all supported extensions
-    out << QString(_("<b>Extensions:</b><br>\n"));
-    const char *extensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
-    if (extensions != nullptr)
+    if (info.count("Extensions") > 0)
     {
-        QStringList extList = QString(extensions).split(" ");
-        foreach(QString s, extList)
+        out << QString(_("<b>Supported extensions:</b><br>\n"));
+        auto ext = info["Extensions"];
+        string::size_type old = 0, pos = ext.find(' ');
+        while (pos != string::npos)
         {
-            out << s << "<br>\n";
+            out << ext.substr(old, pos - old).c_str() << "<br>\n";
+            old = pos + 1;
+            pos = ext.find(' ', old);
         }
+        out << ext.substr(old).c_str();
     }
 
     QDialog glInfo(this);
 
-    glInfo.setWindowTitle(_("OpenGL Info"));
+    glInfo.setWindowTitle(_("Renderer Info"));
 
     QVBoxLayout* layout = new QVBoxLayout(&glInfo);
     QTextEdit* textEdit = new QTextEdit(infoText, &glInfo);
@@ -1341,49 +1408,15 @@ void CelestiaAppWindow::createMenus()
     m_appCore->getSimulation()->setSyncTime(check);
 
     // Set up the default time zone name and offset from UTC
-    time_t curtime = time(nullptr);
-    m_appCore->start(astro::UTCtoTDB((double) curtime / 86400.0 + (double) astro::Date(1970, 1, 1)));
+    m_appCore->start();
 
-#ifndef _WIN32
-    struct tm result;
-    if (localtime_r(&curtime, &result))
+    string tzName;
+    int dstBias;
+    if (GetTZInfo(tzName, dstBias))
     {
-        m_appCore->setTimeZoneBias(result.tm_gmtoff);
-        m_appCore->setTimeZoneName(result.tm_zone);
+        m_appCore->setTimeZoneName(tzName);
+        m_appCore->setTimeZoneBias(dstBias);
     }
-#else
-    TIME_ZONE_INFORMATION tzi;
-    DWORD dst = GetTimeZoneInformation(&tzi);
-    if (dst != TIME_ZONE_ID_INVALID)
-    {
-        LONG dstBias = 0;
-        WCHAR* tzName = nullptr;
-
-        if (dst == TIME_ZONE_ID_STANDARD)
-        {
-            dstBias = tzi.StandardBias;
-            tzName = tzi.StandardName;
-        }
-        else if (dst == TIME_ZONE_ID_DAYLIGHT)
-        {
-            dstBias = tzi.DaylightBias;
-            tzName = tzi.DaylightName;
-        }
-
-        if (tzName == nullptr)
-        {
-            m_appCore->setTimeZoneName("   ");
-        }
-        else
-        {
-            char tz_name_out[20];
-            size_t length = wcstombs(tz_name_out, tzName, sizeof(tz_name_out)-1);
-            tz_name_out[std::min(sizeof(tz_name_out)-1, length)] = '\0';
-            m_appCore->setTimeZoneName(tz_name_out);
-        }
-        m_appCore->setTimeZoneBias((tzi.Bias + dstBias) * -60);
-    }
-#endif
 
     // If LocalTime is set to false, set the time zone bias to zero.
     if (settings.contains("LocalTime"))

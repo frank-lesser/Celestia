@@ -22,7 +22,7 @@ branches:
   - master
 
 artifacts:
-- path: '**/celestia-*.exe'
+- path: '**/celestia-*.7z'
   name: win
 
 # Build worker image (VM template)
@@ -48,16 +48,16 @@ init:
 
 install:
 - cd c:\tools\vcpkg
-- git pull
 - vcpkg install libpng:x86-windows
 - vcpkg install gettext:x86-windows
 - vcpkg install libjpeg-turbo:x86-windows
 - vcpkg remove lua:x86-windows
 - vcpkg install luajit:x86-windows
 - vcpkg install fmt:x86-windows
-- vcpkg install glew:x86-windows
+- vcpkg install libepoxy:x86-windows
 - vcpkg install eigen3:x86-windows
 - vcpkg install freetype:x86-windows
+- git pull
 - vcpkg install cspice:x86-windows
 - vcpkg integrate install
 - cd %APPVEYOR_BUILD_FOLDER%
@@ -70,9 +70,23 @@ build_script:
 
     cd build
 
-    cmake -DCMAKE_PREFIX_PATH=%Qt5_DIR% -DCMAKE_TOOLCHAIN_FILE=c:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DENABLE_SPICE=ON -DENABLE_TOOLS=ON -DENABLE_TTF=ON ..
+    cmake -DCMAKE_PREFIX_PATH=%Qt5_DIR% -DCMAKE_TOOLCHAIN_FILE=c:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DENABLE_SPICE=ON -DENABLE_TOOLS=ON -DENABLE_TTF=ON -DENABLE_TESTS=ON -DENABLE_GLEW=OFF ..
 
     cmake --build . --config Release -- /maxcpucount:4 /nologo
+
+    set CTEST_OUTPUT_ON_FAILURE=1
+
+    ctest -C Release
+
+after_build:
+  - cmd: >-
+      cd c:\projects\celestia\build\src\celestia
+
+      7z a celestia-win.x86.7z win32\Release\*
+
+      windeployqt --no-angle --no-opengl-sw --no-translations --no-system-d3d-compiler qt\Release\
+
+      7z a celestia-qt.x86.7z qt\Release\*
 
 #on_failure:
 #- type "c:\projects\celestia\build\CMakeFiles\CMakeOutput.log"

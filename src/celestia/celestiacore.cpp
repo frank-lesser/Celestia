@@ -31,15 +31,15 @@
 #include <celengine/planetgrid.h>
 #include <celengine/visibleregion.h>
 #include <celmath/geomutil.h>
-#include <celutil/util.h>
+#include <celutil/color.h>
 #include <celutil/filetype.h>
 #include <celutil/formatnum.h>
 #include <celutil/debug.h>
+#include <celutil/gettext.h>
 #include <celutil/utf8.h>
 #include <celcompat/filesystem.h>
 #include <celcompat/memory.h>
 #include <Eigen/Geometry>
-#include <GL/glew.h>
 #include <iostream>
 #include <fstream>
 #include <iomanip>
@@ -50,9 +50,6 @@
 #include <cassert>
 #include <ctime>
 #include <set>
-#include <celutil/debug.h>
-#include <celutil/color.h>
-#include <celengine/vecgl.h>
 #include <celengine/rectangle.h>
 
 #ifdef CELX
@@ -1847,6 +1844,12 @@ void CelestiaCore::setAltAzimuthMode(bool enable)
     altAzimuthMode = enable;
 }
 
+void CelestiaCore::start()
+{
+    time_t curtime = time(nullptr);
+    start(astro::UTCtoTDB((double) curtime / 86400.0 + (double) astro::Date(1970, 1, 1)));
+}
+
 void CelestiaCore::start(double t)
 {
     if (config->initScriptFile != "")
@@ -3182,7 +3185,7 @@ void CelestiaCore::renderOverlay()
                     // Skip displaying the English name if a localized version is present.
                     string starName = sim->getUniverse()->getStarCatalog()->getStarName(*sel.star());
                     string locStarName = sim->getUniverse()->getStarCatalog()->getStarName(*sel.star(), true);
-                    if (sel.star()->getCatalogNumber() == 0 && selectionNames.find("Sun") != string::npos && (const char*) "Sun" != _("Sun"))
+                    if (sel.star()->getIndex() == 0 && selectionNames.find("Sun") != string::npos && (const char*) "Sun" != _("Sun"))
                     {
                         string::size_type startPos = selectionNames.find("Sun");
                         string::size_type endPos = selectionNames.find(_("Sun"));
@@ -3898,18 +3901,17 @@ bool CelestiaCore::readStars(const CelestiaConfig& cfg,
 {
     StarDetails::SetStarTextures(cfg.starTextures);
 
+    StarNameDatabase* starNameDB = nullptr;
     ifstream starNamesFile(cfg.starNamesFile.string(), ios::in);
-    if (!starNamesFile.good())
+    if (starNamesFile.good())
+    {
+        starNameDB = StarNameDatabase::readNames(starNamesFile);
+        if (starNameDB == nullptr)
+            cerr << _("Error reading star names file\n");
+    }
+    else
     {
         fmt::fprintf(cerr, _("Error opening %s\n"), cfg.starNamesFile);
-        return false;
-    }
-
-    StarNameDatabase* starNameDB = StarNameDatabase::readNames(starNamesFile);
-    if (starNameDB == nullptr)
-    {
-        cerr << _("Error reading star names file\n");
-        return false;
     }
 
     // First load the binary star database file.  The majority of stars
@@ -3938,6 +3940,8 @@ bool CelestiaCore::readStars(const CelestiaConfig& cfg,
         }
     }
 
+    if (starNameDB == nullptr)
+        starNameDB = new StarNameDatabase();
     starDB->setNameDatabase(starNameDB);
 
     loadCrossIndex(starDB, StarDatabase::HenryDraper, cfg.HDCrossIndexFile);
@@ -4237,11 +4241,15 @@ void CelestiaCore::notifyWatchers(int property)
 }
 
 
-void CelestiaCore::goToUrl(const string& urlStr)
+bool CelestiaCore::goToUrl(const string& urlStr)
 {
     Url url(urlStr, this);
-    url.goTo();
-    notifyWatchers(RenderFlagsChanged | LabelFlagsChanged);
+    bool ret = url.goTo();
+    if (ret)
+        notifyWatchers(RenderFlagsChanged | LabelFlagsChanged);
+    else
+        fatalError(_("Invalid URL"));
+    return ret;
 }
 
 

@@ -1,14 +1,16 @@
 #include <iostream>
-#include <celutil/util.h>
+#include <celutil/gettext.h>
 #include <celutil/debug.h>
-#include <celengine/catentry.h>
+#include <celengine/astroobj.h>
 #include "category.h"
 
 UserCategory::UserCategory(const std::string &n, UserCategory *p, const std::string &domain) :
         m_name(n), 
         m_parent(p)
 {
+#ifdef ENABLE_NLS
     m_i18n = dgettext(m_name.c_str(), domain.c_str());
+#endif
 }
 
 UserCategory::~UserCategory() { cleanup(); }
@@ -30,10 +32,10 @@ bool UserCategory::addObject(Selection s)
 {
     if (s.empty())
         return false;
-    Selection s_ = s.catEntry()->toSelection();
+    Selection s_ = s.object()->toSelection();
     if (!_addObject(s_))
         return false;
-    return s_.catEntry()->_addToCategory(this);
+    return s_.object()->_addToCategory(this);
 }
 
 bool UserCategory::removeObject(Selection s)
@@ -42,7 +44,7 @@ bool UserCategory::removeObject(Selection s)
         return false;
     if (!_removeObject(s))
         return false;
-    return s.catEntry()->_removeFromCategory(this);
+    return s.object()->_removeFromCategory(this);
 }
 
 bool UserCategory::_removeObject(Selection s)

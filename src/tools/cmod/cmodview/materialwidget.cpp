@@ -7,7 +7,7 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
-#include <GL/glew.h>
+#include "glsupport.h"
 #include "materialwidget.h"
 #include <celmodel/material.h>
 #include <QGridLayout>
@@ -317,7 +317,11 @@ static QSet<QString> listTextures(QDir& dir)
     filters << "*.png" << "*.jpg" << "*.dds" << "*.dxt5nm";
     QStringList textureFileNames = dir.entryList(filters, QDir::Files);
 
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    return QSet<QString>(textureFileNames.begin(), textureFileNames.end());
+#else
     return QSet<QString>::fromList(textureFileNames);
+#endif
 }
 
 void

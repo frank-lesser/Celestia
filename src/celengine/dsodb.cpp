@@ -16,7 +16,7 @@
 #include <algorithm>
 #include <celutil/debug.h>
 #include <celmath/mathlib.h>
-#include <celutil/util.h>
+#include <celutil/gettext.h>
 #include <celutil/bytes.h>
 #include <celutil/utf8.h>
 #include <celengine/dsodb.h>
@@ -26,6 +26,7 @@
 #include "parseobject.h"
 #include "multitexture.h"
 #include "meshmanager.h"
+#include "tokenizer.h"
 #include <celutil/debug.h>
 
 #include <celengine/galaxy.h>
@@ -55,7 +56,7 @@ struct PtrCatalogNumberOrderingPredicate
 
     bool operator()(const DeepSkyObject* const & dso0, const DeepSkyObject* const & dso1) const
     {
-        return (dso0->getCatalogNumber() < dso1->getCatalogNumber());
+        return (dso0->getIndex() < dso1->getIndex());
     }
 };
 
@@ -67,17 +68,17 @@ DSODatabase::~DSODatabase()
 }
 
 
-DeepSkyObject* DSODatabase::find(const uint32_t catalogNumber) const
+DeepSkyObject* DSODatabase::find(const AstroCatalog::IndexNumber catalogNumber) const
 {
     Galaxy refDSO;  //terrible hack !!
-    refDSO.setCatalogNumber(catalogNumber);
+    refDSO.setIndex(catalogNumber);
 
     DeepSkyObject** dso   = lower_bound(catalogNumberIndex,
                                         catalogNumberIndex + nDSOs,
                                         &refDSO,
                                         PtrCatalogNumberOrderingPredicate());
 
-    if (dso != catalogNumberIndex + nDSOs && (*dso)->getCatalogNumber() == catalogNumber)
+    if (dso != catalogNumberIndex + nDSOs && (*dso)->getIndex() == catalogNumber)
         return *dso;
     else
         return nullptr;
@@ -91,8 +92,8 @@ DeepSkyObject* DSODatabase::find(const string& name) const
 
     if (namesDB != nullptr)
     {
-        uint32_t catalogNumber   = namesDB->findCatalogNumberByName(name);
-        if (catalogNumber != DeepSkyObject::InvalidCatalogNumber)
+        AstroCatalog::IndexNumber catalogNumber   = namesDB->findCatalogNumberByName(name);
+        if (catalogNumber != AstroCatalog::InvalidIndex)
             return find(catalogNumber);
     }
 
@@ -114,7 +115,7 @@ vector<string> DSODatabase::getCompletion(const string& name) const
 
 string DSODatabase::getDSOName(const DeepSkyObject* const & dso, bool i18n) const
 {
-    uint32_t catalogNumber    = dso->getCatalogNumber();
+    AstroCatalog::IndexNumber catalogNumber    = dso->getIndex();
 
     if (namesDB != nullptr)
     {
@@ -136,7 +137,7 @@ string DSODatabase::getDSONameList(const DeepSkyObject* const & dso, const unsig
 {
     string dsoNames;
 
-    unsigned int catalogNumber   = dso->getCatalogNumber();
+    auto catalogNumber   = dso->getIndex();
 
     DSONameDatabase::NumberIndex::const_iterator iter  = namesDB->getFirstNameIter(catalogNumber);
 
@@ -221,8 +222,10 @@ bool DSODatabase::load(istream& in, const fs::path& resourcePath)
     Tokenizer tokenizer(&in);
     Parser    parser(&tokenizer);
 
+#ifdef ENABLE_NLS
     const char *d = resourcePath.string().c_str();
     bindtextdomain(d, d); // domain name is the same as resource path
+#endif
 
     while (tokenizer.nextToken() != Tokenizer::TokenEnd)
     {
@@ -236,12 +239,12 @@ bool DSODatabase::load(istream& in, const fs::path& resourcePath)
         }
         objType = tokenizer.getNameValue();
 
-        bool   autoGenCatalogNumber   = true;
-        uint32_t objCatalogNumber     = DeepSkyObject::InvalidCatalogNumber;
+        bool autoGenCatalogNumber = true;
+        AstroCatalog::IndexNumber objCatalogNumber = AstroCatalog::InvalidIndex;
         if (tokenizer.getTokenType() == Tokenizer::TokenNumber)
         {
             autoGenCatalogNumber   = false;
-            objCatalogNumber       = (uint32_t) tokenizer.getNumberValue();
+            objCatalogNumber       = (AstroCatalog::IndexNumber) tokenizer.getNumberValue();
             tokenizer.nextToken();
         }
 
@@ -308,7 +311,7 @@ bool DSODatabase::load(istream& in, const fs::path& resourcePath)
 
             DSOs[nDSOs++] = obj;
 
-            obj->setCatalogNumber(objCatalogNumber);
+            obj->setIndex(objCatalogNumber);
 
             if (namesDB != nullptr && !objName.empty())
             {

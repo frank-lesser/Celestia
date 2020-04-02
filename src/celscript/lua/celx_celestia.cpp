@@ -10,6 +10,7 @@
 // of the License, or (at your option) any later version.
 
 #include <celutil/debug.h>
+#include <celutil/gettext.h>
 #if NO_TTF
 #include "celtxf/texturefont.h"
 #else
@@ -1625,7 +1626,7 @@ static int celestia_getstar(lua_State* l)
     CelestiaCore* appCore = this_celestia(l);
     double starIndex = Celx_SafeGetNumber(l, 2, AllErrors, "First arg to celestia:getstar must be a number");
     Universe* u = appCore->getSimulation()->getUniverse();
-    Star* star = u->getStarCatalog()->getStar((uint32_t) starIndex);
+    Star* star = u->getStarCatalog()->find((uint32_t) starIndex);
     if (star == nullptr)
         lua_pushnil(l);
     else
@@ -1641,7 +1642,7 @@ static int celestia_getdso(lua_State* l)
     CelestiaCore* appCore = this_celestia(l);
     double dsoIndex = Celx_SafeGetNumber(l, 2, AllErrors, "First arg to celestia:getdso must be a number");
     Universe* u = appCore->getSimulation()->getUniverse();
-    DeepSkyObject* dso = u->getDSOCatalog()->getDSO((uint32_t) dsoIndex);
+    DeepSkyObject* dso = u->getDSOCatalog()->find((uint32_t) dsoIndex);
     if (dso == nullptr)
         lua_pushnil(l);
     else
@@ -2458,6 +2459,7 @@ static int celestia_getrootcategories(lua_State *l)
 
 static int celestia_bindtranslationdomain(lua_State *l)
 {
+#ifdef ENABLE_NLS
     CelxLua celx(l);
 
     const char *domain = celx.safeGetNonEmptyString(2, AllErrors, "First argument of celestia:bindtranslationdomain must be domain name string.");
@@ -2466,6 +2468,9 @@ static int celestia_bindtranslationdomain(lua_State *l)
     if (newdir == nullptr)
         return 0;
     return celx.push(newdir);
+#else
+    return 0;
+#endif
 }
 
 void ExtendCelestiaMetaTable(lua_State* l)

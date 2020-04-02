@@ -11,6 +11,7 @@
 // of the License, or (at your option) any later version.
 
 #include <celestia/celestiacore.h>
+#include <celutil/gettext.h>
 #include "qtdeepskybrowser.h"
 #include "qtcolorswatchwidget.h"
 #include "qtinfopanel.h"
@@ -28,6 +29,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QRegExp>
+#include <QCollator>
 #include <vector>
 #include <set>
 
@@ -69,6 +71,7 @@ private:
     Criterion criterion;
     Vector3d pos;
     const Universe *universe;
+    QCollator coll;
 };
 
 
@@ -226,6 +229,7 @@ DSOPredicate::DSOPredicate(Criterion _criterion,
     pos(_observerPos),
     universe(_universe)
 {
+    coll.setNumericMode(true);
 }
 
 
@@ -252,7 +256,8 @@ bool DSOPredicate::operator()(const DeepSkyObject* dso0, const DeepSkyObject* ds
         return strcmp(dso0->getType(), dso1->getType()) < 0;
 
     case Alphabetical:
-        return universe->getDSOCatalog()->getDSOName(dso0, true) > universe->getDSOCatalog()->getDSOName(dso1, true);
+        return coll.compare(universe->getDSOCatalog()->getDSOName(dso0, true).c_str(),
+                            universe->getDSOCatalog()->getDSOName(dso1, true).c_str()) < 0;
 
     default:
         return false;

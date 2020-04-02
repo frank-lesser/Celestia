@@ -18,7 +18,9 @@
 #include <cstring>
 #include <ctime>
 #include <unistd.h>
-#include <GL/glew.h>
+
+// celengine/glsupport.h must be included before GL/glut.h / GL/gl.h
+#include <celengine/glsupport.h>
 #ifndef MACOSX
 #include <GL/glut.h>
 #else
@@ -26,7 +28,7 @@
 #include <GLUT/glut.h>
 #endif
 #include <fmt/printf.h>
-#include <celutil/util.h>
+#include <celutil/gettext.h>
 #include <celutil/debug.h>
 #include <celmath/mathlib.h>
 #include <celengine/astro.h>
@@ -35,6 +37,7 @@
 #include "popt.h"
 */
 
+using namespace celestia;
 using namespace std;
 
 
@@ -513,12 +516,10 @@ int main(int argc, char* argv[])
     initMenus();
     #endif
 
-    GLenum glewErr = glewInit();
-    if (glewErr != GLEW_OK)
+    if (!gl::init() || !gl::checkVersion(gl::GL_2_1))
     {
-        fmt::fprintf(std::cerr,
-                     _("Celestia was unable to initialize OpenGL extensions (error %i). Graphics quality will be reduced."),
-                     glewErr);
+        cout << _("Celestia was unable to initialize OpenGL 2.1.\n");
+	return 1;
     }
 
     // GL should be all set up, now initialize the renderer.
@@ -527,13 +528,14 @@ int main(int argc, char* argv[])
     appCore->getRenderer()->setSolarSystemMaxDistance(appCore->getConfig()->SolarSystemMaxDistance);
 
     // Set the simulation starting time to the current system time
-    time_t curtime = time(nullptr);
-    appCore->start((double) curtime / 86400.0 + (double) astro::Date(1970, 1, 1));
-    struct tm result;
-    if (localtime_r(&curtime, &result))
+    appCore->start();
+
+    string tzName;
+    int dstBias;
+    if (GetTZInfo(tzName, dstBias))
     {
-        appCore->setTimeZoneBias(result.tm_gmtoff);
-        appCore->setTimeZoneName(result.tm_zone);
+        appCore->setTimeZoneName(tzName);
+        appCore->setTimeZoneBias(dstBias);
     }
 
     if (startfile == 1) {

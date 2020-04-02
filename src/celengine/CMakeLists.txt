@@ -5,6 +5,8 @@ set(CELENGINE_SOURCES
   asterismrenderer.h
   astro.cpp
   astro.h
+  astroobj.h
+  astroobj.cpp
   atmosphere.h
   axisarrow.cpp
   axisarrow.h
@@ -18,8 +20,6 @@ set(CELENGINE_SOURCES
   catalogxref.h
   category.cpp
   category.h
-  catentry.cpp
-  catentry.h
   console.cpp
   console.h
   constellation.cpp
@@ -39,6 +39,8 @@ set(CELENGINE_SOURCES
   dsooctree.h
   frame.cpp
   frame.h
+  framebuffer.cpp
+  framebuffer.h
   frametree.cpp
   frametree.h
   galaxy.cpp
@@ -51,6 +53,10 @@ set(CELENGINE_SOURCES
   globular.h
   glshader.cpp
   glshader.h
+  glsupport.cpp
+  glsupport.h
+  hash.cpp
+  hash.h
   #hdrfuncrender.cpp
   image.cpp
   image.h
@@ -152,6 +158,8 @@ set(CELENGINE_SOURCES
   univcoord.h
   universe.cpp
   universe.h
+  value.cpp
+  value.h
   vecgl.h
   vertexobject.cpp
   vertexobject.h

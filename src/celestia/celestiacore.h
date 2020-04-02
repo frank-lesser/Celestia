@@ -21,7 +21,6 @@
 #include <celengine/render.h>
 #include <celengine/simulation.h>
 #include <celengine/overlayimage.h>
-#include <GL/glew.h>
 #include "configfile.h"
 #include "favorites.h"
 #include "destination.h"
@@ -183,12 +182,13 @@ class CelestiaCore // : public Watchable<CelestiaCore>
                         ProgressNotifier* progressNotifier = nullptr);
     bool initRenderer();
     void start(double t);
+    void start();
     void getLightTravelDelay(double distanceKm, int&, int&, float&);
     void setLightTravelDelay(double distanceKm);
 
     // URLs and history navigation
     void setStartURL(std::string url);
-    void goToUrl(const std::string& urlStr);
+    bool goToUrl(const std::string& urlStr);
     void addToHistory();
     void back();
     void forward();
