@@ -17,6 +17,7 @@
 #include "glsupport.h"
 #include "vecgl.h"
 #include "console.h"
+#include "shadermanager.h"
 #if NO_TTF
 #include <celtxf/texturefont.h>
 #else
@@ -85,20 +86,21 @@ void Console::begin()
     glMatrixMode(GL_MODELVIEW);
     glPushMatrix();
     glLoadIdentity();
-    glTranslatef(0.125f, 0.125f, 0);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    global.reset();
 }
 
 
 void Console::end()
 {
+    font->unbind();
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
     glMatrixMode(GL_MODELVIEW);
     glPopMatrix();
-    font->unbind();
 }
 
 
@@ -108,7 +110,7 @@ void Console::render(int rowHeight)
         return;
 
     font->bind();
-    glPushMatrix();
+    savePos();
     for (int i = 0; i < rowHeight; i++)
     {
         //int r = (nRows - rowHeight + 1 + windowRow + i) % nRows;
@@ -118,15 +120,16 @@ void Console::render(int rowHeight)
             wchar_t ch = text[r * (nColumns + 1) + j];
             if (ch == '\0')
                 break;
-            font->render(ch);
+            font->render(ch, global.x + xoffset, global.y);
+            xoffset += font->getAdvance(ch);
         }
 
         // advance to the next line
-        glPopMatrix();
-        glTranslatef(0.0f, -(1.0f + font->getHeight()), 0.0f);
-        glPushMatrix();
+        restorePos();
+        global.y -= 1.0f + font->getHeight();
+        savePos();
     }
-    glPopMatrix();
+    restorePos();
 }
 
 
@@ -140,7 +143,11 @@ void Console::setScale(int w, int h)
 void Console::setFont(TextureFont* f)
 {
     if (f != font)
+    {
+        if (font != nullptr)
+            font->flush();
         font = f;
+    }
 }
 
 
@@ -234,19 +241,43 @@ int Console::getHeight() const
 
 void Console::setColor(float r, float g, float b, float a) const
 {
-    glColor4f(r, g, b, a);
+    if (font != nullptr)
+        font->flush();
+    glVertexAttrib4f(CelestiaGLProgram::ColorAttributeIndex, r, g, b, a);
 }
 
 
 void Console::setColor(const Color& c) const
 {
-    glColor4f(c.red(), c.green(), c.blue(), c.alpha());
+    if (font != nullptr)
+        font->flush();
+    glVertexAttrib4f(CelestiaGLProgram::ColorAttributeIndex,
+                     c.red(), c.green(), c.blue(), c.alpha());
+
 }
 
 
-void Console::moveBy(float dx, float dy, float dz) const
+void Console::moveBy(float dx, float dy)
 {
-    glTranslatef(dx, dy, dz);
+    global.x += dx;
+    global.y += dy;
+}
+
+
+void Console::savePos()
+{
+    posStack.push_back(global);
+}
+
+
+void Console::restorePos()
+{
+    if (!posStack.empty())
+    {
+        global = posStack.back();
+        posStack.pop_back();
+    }
+    xoffset = 0.0f;
 }
 
 

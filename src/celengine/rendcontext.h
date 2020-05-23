@@ -68,6 +68,18 @@ class RenderContext
 };
 
 
+class Shadow_RenderContext : public RenderContext
+{
+ public:
+    Shadow_RenderContext(const Renderer *r) :
+        RenderContext(r)
+    {
+    }
+    void makeCurrent(const cmod::Material&) override
+    {
+    }
+};
+
 
 class GLSL_RenderContext : public RenderContext
 {
@@ -81,6 +93,7 @@ class GLSL_RenderContext : public RenderContext
     void makeCurrent(const cmod::Material&) override;
     void setLunarLambert(float);
     void setAtmosphere(const Atmosphere*);
+    void setShadowMap(GLuint, GLuint, const Eigen::Matrix4f*);
 
  private:
      void initLightingEnvironment();
@@ -99,6 +112,9 @@ class GLSL_RenderContext : public RenderContext
     float lunarLambert{ 0.0f };
 
     ShaderProperties shaderProps;
+    const Eigen::Matrix4f *lightMatrix { nullptr };
+    GLuint shadowMap { 0 };
+    GLuint shadowMapWidth { 0 };
 };
 
 

@@ -14,7 +14,12 @@ if(POLICY CMP0072)
   endif()
 endif()
 
-project(celestia VERSION 1.7.0 DESCRIPTION "3D Universe simulator")
+# Remove leading and trailing whitespace from libraries linked
+if(POLICY CMP0004)
+  cmake_policy(SET CMP0004 OLD)
+endif()
+
+project(celestia VERSION 1.7.0 LANGUAGES C CXX)
 set(DISPLAY_NAME "Celestia")
 #
 #
@@ -25,6 +30,7 @@ option(ENABLE_NLS     "Enable interface translation? (Default: on)" ON)
 option(ENABLE_GLUT    "Build simple Glut frontend? (Default: on)" OFF)
 option(ENABLE_GTK     "Build GTK2 frontend (Unix only)? (Default: off)" OFF)
 option(ENABLE_QT      "Build Qt frontend? (Default: on)" ON)
+option(ENABLE_SDL     "Build SDL frontend? (Default: off)" OFF)
 option(ENABLE_WIN     "Build Windows native frontend? (Default: on)" ON)
 option(ENABLE_THEORA  "Support video capture to OGG Theora? (Default: on)" ON)
 option(ENABLE_TOOLS   "Build different tools? (Default: off)" OFF)
@@ -32,8 +38,7 @@ option(NATIVE_OSX_APP "Support native OSX paths read data from (Default: off)" O
 option(FAST_MATH      "Build with unsafe fast-math compiller option (Default: off)" OFF)
 option(ENABLE_TTF     "Use TrueType fonts instead of TXF (Default: off)" OFF)
 option(ENABLE_TESTS   "Enable unit tests? (Default: off)" OFF)
-option(ENABLE_GLEW    "Use GLEW instead of libepoxy? (Default: on)" ON)
-option(ENABLE_DATA    "Install data from content submodule? (Default: off)" OFF)
+option(ENABLE_DATA    "Install data from content submodule? (Default: on)" ON)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type." FORCE)
@@ -104,6 +109,37 @@ if(ENABLE_NLS)
   find_package(Intl REQUIRED)
   include_directories(${Intl_INCLUDE_DIRS})
   link_libraries(${Intl_LIBRARIES})
+
+  # begin static libintl support
+  # libintl.a may depend on libiconv.a and libcharset.a
+  # this is the case of vcpkg + mingw, for example
+  macro(try_compile_intl)
+    set(_argv ${ARGV})
+    try_compile(INTLLIB ${CMAKE_BINARY_DIR}
+                "${CMAKE_SOURCE_DIR}/checks/intl.cpp"
+                LINK_LIBRARIES ${_argv}
+                CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${Intl_INCLUDE_DIRS}")
+  endmacro()
+
+  try_compile_intl(${Intl_LIBRARIES})
+  if (NOT INTLLIB)
+    message(STATUS "Checking for libiconv and libcharset dependencies of libintl")
+    find_package(Iconv REQUIRED)
+    link_libraries(${Iconv_LIBRARIES})
+
+    try_compile_intl(${Intl_LIBRARIES} ${Iconv_LIBRARIES})
+    if (NOT INTLLIB)
+      find_library(Charset_LIBRARY NAMES libcharset charset HINTS Charset_DIR)
+      try_compile_intl(${Intl_LIBRARIES} ${Iconv_LIBRARIES} ${Charset_LIBRARY})
+      if (NOT INTLLIB)
+        message(FATAL_ERROR "LibIntl has unknown dependencies")
+      else()
+        link_libraries(${Charset_LIBRARY})
+      endif()
+    endif()
+  endif()
+  # end static libintl support
+
   add_definitions(-DENABLE_NLS)
 else()
   message(STATUS "NLS is disabled. Not looking for gettext and libintl.")
@@ -145,16 +181,9 @@ find_package(OpenGL REQUIRED)
 include_directories(${OPENGL_INCLUDE_DIRS})
 link_libraries(${OPENGL_LIBRARIES})
 
-if(ENABLE_GLEW)
-  find_package(GLEW REQUIRED)
-  link_libraries(GLEW::GLEW)
-  include_directories(${GLEW_INCLUDE_DIRS})
-  add_definitions(-DUSE_GLEW)
-else()
-  find_package(Libepoxy REQUIRED)
-  link_libraries(libepoxy::libepoxy)
-  include_directories(${LIBEPOXY_INCLUDE_DIR})
-endif()
+find_package(Libepoxy REQUIRED)
+link_libraries(libepoxy::libepoxy)
+include_directories(${LIBEPOXY_INCLUDE_DIR})
 
 find_package(Eigen3 3.3 NO_MODULE) # -DEigen3_DIR=...
 if(TARGET Eigen3::Eigen)

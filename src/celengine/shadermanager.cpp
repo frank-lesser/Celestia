@@ -8,18 +8,19 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
-#include <celutil/util.h>
-#include <celcompat/filesystem.h>
-#include "shadermanager.h"
-#include "glsupport.h"
+#include <cassert>
 #include <cmath>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
-#include <celutil/debug.h>
-#include <cassert>
 #include <Eigen/Geometry>
+#include <celcompat/filesystem.h>
+#include <celmath/geomutil.h>
+#include <celutil/debug.h>
+#include "glsupport.h"
+#include "vecgl.h"
+#include "shadermanager.h"
 
 using namespace celestia;
 using namespace Eigen;
@@ -29,12 +30,19 @@ using namespace std;
 #define USE_GLSL_STRUCTS
 #define POINT_FADE 0
 
+#ifndef GL_ONLY_SHADOWS
+#define GL_ONLY_SHADOWS 1
+#endif
+
+constexpr const int ShadowSampleKernelWidth = 2;
+
 enum ShaderVariableType
 {
     Shader_Float,
     Shader_Vector2,
     Shader_Vector3,
     Shader_Vector4,
+    Shader_Matrix4,
     Shader_Sampler1D,
     Shader_Sampler2D,
     Shader_Sampler3D,
@@ -44,8 +52,9 @@ enum ShaderVariableType
 };
 
 static const char* errorVertexShaderSource =
+    "attribute vec4 in_Position;\n"
     "void main(void) {\n"
-    "   gl_Position = ftransform();\n"
+    "   gl_Position = gl_ModelViewProjectionMatrix * in_Position;\n"
     "}\n";
 static const char* errorFragmentShaderSource =
     "void main(void) {\n"
@@ -55,6 +64,15 @@ static const char* errorFragmentShaderSource =
 
 static const char* CommonHeader = "#version 120\n";
 
+static const char* CommonAttribs = R"glsl(
+attribute vec4 in_Position;
+attribute vec3 in_Normal;
+attribute vec4 in_TexCoord0;
+attribute vec4 in_TexCoord1;
+attribute vec4 in_TexCoord2;
+attribute vec4 in_TexCoord3;
+attribute vec4 in_Color;
+)glsl";
 
 bool
 ShaderProperties::usesShadows() const
@@ -163,6 +181,12 @@ ShaderProperties::hasCloudShadows() const
 }
 
 
+bool
+ShaderProperties::hasShadowMap() const
+{
+    return (texUsage & ShadowMapTexture) != 0;
+}
+
 void
 ShaderProperties::setCloudShadowForLight(unsigned int lightIndex, bool enabled)
 {
@@ -224,6 +248,7 @@ ShaderProperties::isViewDependent() const
     case DiffuseModel:
     case ParticleDiffuseModel:
     case EmissiveModel:
+    case UnlitModel:
         return false;
     default:
         return true;
@@ -416,6 +441,8 @@ ShaderTypeString(ShaderVariableType type)
         return "vec3";
     case Shader_Vector4:
         return "vec4";
+    case Shader_Matrix4:
+        return "mat4";
     case Shader_Sampler1D:
         return "sampler1D";
     case Shader_Sampler2D:
@@ -1024,7 +1051,7 @@ ShadowDepth(unsigned int i)
 static string
 TexCoord2D(unsigned int i)
 {
-    return fmt::sprintf("gl_MultiTexCoord%d.st", i);
+    return fmt::sprintf("in_TexCoord%d.st", i);
 }
 
 
@@ -1055,9 +1082,9 @@ TangentSpaceTransform(const string& dst, const string& src)
 {
     string source;
 
-    source += dst + ".x = dot(tangent, " + src + ");\n";
+    source += dst + ".x = dot(in_Tangent, " + src + ");\n";
     source += dst + ".y = dot(-bitangent, " + src + ");\n";
-    source += dst + ".z = dot(gl_Normal, " + src + ");\n";
+    source += dst + ".z = dot(in_Normal, " + src + ");\n";
 
     return source;
 }
@@ -1120,18 +1147,18 @@ AddDirectionalLightContrib(unsigned int i, const ShaderProperties& props)
     }
     else
     {
-        source += "NL = max(0.0, dot(gl_Normal, " +
+        source += "NL = max(0.0, dot(in_Normal, " +
             LightProperty(i, "direction") + "));\n";
     }
 
     if (props.lightModel == ShaderProperties::SpecularModel)
     {
-        source += "H = normalize(" + LightProperty(i, "direction") + " + normalize(eyePosition - gl_Vertex.xyz));\n";
-        source += "NH = max(0.0, dot(gl_Normal, H));\n";
+        source += "H = normalize(" + LightProperty(i, "direction") + " + normalize(eyePosition - in_Position.xyz));\n";
+        source += "NH = max(0.0, dot(in_Normal, H));\n";
 
         // The calculation below uses the infinite viewer approximation. It's slightly faster,
         // but results in less accurate rendering.
-        // source += "NH = max(0.0, dot(gl_Normal, " + LightProperty(i, "halfVector") + "));\n";
+        // source += "NH = max(0.0, dot(in_Normal, " + LightProperty(i, "halfVector") + "));\n";
     }
 
     if (props.usesTangentSpaceLighting())
@@ -1153,7 +1180,7 @@ AddDirectionalLightContrib(unsigned int i, const ShaderProperties& props)
         source += "float sinAlpha = sqrt(1.0 - cosAlpha * cosAlpha);\n";
         source += "float sinBeta = sqrt(1.0 - cosBeta * cosBeta);\n";
         source += "float tanBeta = sinBeta / cosBeta;\n";
-        source += "float cosAzimuth = dot(normalize(eye - gl_Normal * NV), normalize(light - gl_Normal * NL));\n";
+        source += "float cosAzimuth = dot(normalize(eye - in_Normal * NV), normalize(light - in_Normal * NL));\n";
         // TODO: precalculate these constants; place them in uniform values
         source += "float roughness2 = 0.7 * 0.7;\n";
         source += "float A = 1.0f - (0.5f * roughness2) / (roughness2 + 0.33);\n";
@@ -1332,7 +1359,7 @@ AtmosphericEffects(const ShaderProperties& props)
     source += "    float qq = dot(eyePosition, eyePosition) - atmosphereRadius.y;\n";
     source += "    float d = sqrt(rq * rq - qq);\n";
     source += "    vec3 atmEnter = eyePosition + min(0.0, (-rq + d)) * eyeDir;\n";
-    source += "    vec3 atmLeave = gl_Vertex.xyz;\n";
+    source += "    vec3 atmLeave = in_Position.xyz;\n";
 
     source += "    vec3 atmSamplePoint = (atmEnter + atmLeave) * 0.5;\n";
     //source += "    vec3 atmSamplePoint = atmEnter * 0.2 + atmLeave * 0.8;\n";
@@ -1424,7 +1451,7 @@ AtmosphericEffects(const ShaderProperties& props, unsigned int nSamples)
     source += "    float qq = dot(eyePosition, eyePosition) - atmosphereRadius.y;\n";
     source += "    float d = sqrt(rq * rq - qq);\n";
     source += "    vec3 atmEnter = eyePosition + min(0.0, (-rq + d)) * eyeDir;\n";
-    source += "    vec3 atmLeave = gl_Vertex.xyz;\n";
+    source += "    vec3 atmLeave = in_Position.xyz;\n";
 
     source += "    vec3 step = (atmLeave - atmEnter) * (1.0 / 10.0);\n";
     source += "    float stepLength = length(step);\n";
@@ -1532,6 +1559,15 @@ TextureSamplerDeclarations(const ShaderProperties& props)
         source += "uniform sampler2D overlayTex;\n";
     }
 
+    if (props.texUsage & ShaderProperties::ShadowMapTexture)
+    {
+#ifndef GL_ONLY_SHADOWS
+        source += DeclareUniform("shadowMapTex0", Shader_Sampler2D);
+#else
+        source += DeclareUniform("shadowMapTex0", Shader_Sampler2DShadow);
+#endif
+    }
+
     return source;
 }
 
@@ -1571,6 +1607,12 @@ TextureCoordDeclarations(const ShaderProperties& props)
             source += "varying vec2 overlayTexCoord;\n";
     }
 
+    if (props.texUsage & ShaderProperties::ShadowMapTexture)
+    {
+        source += DeclareVarying("shadowTexCoord0", Shader_Vector4);
+        source += DeclareVarying("cosNormalLightDir", Shader_Float);
+    }
+
     return source;
 }
 
@@ -1579,18 +1621,61 @@ string
 PointSizeCalculation()
 {
     string source;
-    source += "float ptSize = pointScale * pointSize / length(vec3(gl_ModelViewMatrix * gl_Vertex));\n";
+    source += "float ptSize = pointScale * in_PointSize / length(vec3(gl_ModelViewMatrix * in_Position));\n";
     source += "pointFade = min(1.0, ptSize * ptSize);\n";
     source += "gl_PointSize = ptSize;\n";
 
     return source;
 }
 
+static string
+CalculateShadow()
+{
+    string source;
+#if GL_ONLY_SHADOWS
+    source += R"glsl(
+float calculateShadow()
+{
+    float texelSize = 1.0 / shadowMapSize;
+    float s = 0.0;
+    float bias = max(0.005 * (1.0 - cosNormalLightDir), 0.0005);
+)glsl";
+    float boxFilterWidth = (float) ShadowSampleKernelWidth - 1.0f;
+    float firstSample = -boxFilterWidth / 2.0f;
+    float lastSample = firstSample + boxFilterWidth;
+    float sampleWeight = 1.0f / (float) (ShadowSampleKernelWidth * ShadowSampleKernelWidth);
+    source += fmt::sprintf("    for (float y = %f; y <= %f; y += 1.0)\n", firstSample, lastSample);
+    source += fmt::sprintf("        for (float x = %f; x <= %f; x += 1.0)\n", firstSample, lastSample);
+    source += "            s += shadow2D(shadowMapTex0, shadowTexCoord0.xyz + vec3(x * texelSize, y * texelSize, bias)).z;\n";
+    source += fmt::sprintf("    return s * %f;\n", sampleWeight);
+    source += "}\n";
+#else
+    source += R"glsl(
+float calculateShadow()
+{
+    float texelSize = 1.0 / shadowMapSize;
+    float s = 0.0;
+    float bias = max(0.005 * (1.0 - cosNormalLightDir), 0.0005);
+    for(float x = -1.0; x <= 1.0; x += 1.0)
+    {
+        for(float y = -1.0; y <= 1.0; y += 1.0)
+        {
+            float pcfDepth = texture2D(shadowMapTex0, shadowTexCoord0.xy + vec2(x * texelSize, y * texelSize)).r;
+            s += shadowTexCoord0.z - bias > pcfDepth ? 1.0 : 0.0;
+        }
+    }
+    return 1.0 - s / 9.0;
+}
+)glsl";
+#endif
+    return source;
+}
 
 GLVertexShader*
 ShaderManager::buildVertexShader(const ShaderProperties& props)
 {
     string source(CommonHeader);
+    source += CommonAttribs;
 
     source += DeclareLights(props);
     if (props.lightModel == ShaderProperties::SpecularModel)
@@ -1609,13 +1694,13 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
     if (props.texUsage & ShaderProperties::PointSprite)
     {
         source += DeclareUniform("pointScale", Shader_Float);
-        source += DeclareAttribute("pointSize", Shader_Float);
+        source += DeclareAttribute("in_PointSize", Shader_Float);
         source += DeclareVarying("pointFade", Shader_Float);
     }
 
     if (props.usesTangentSpaceLighting())
     {
-        source += "attribute vec3 tangent;\n";
+        source += "attribute vec3 in_Tangent;\n";
         for (unsigned int i = 0; i < props.nLights; i++)
         {
             source += "varying vec3 " + LightDir_tan(i) + ";\n";
@@ -1646,8 +1731,11 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
     }
     else
     {
-        source += "uniform vec3 ambientColor;\n";
-        source += "uniform float opacity;\n";
+        if (props.lightModel != ShaderProperties::UnlitModel)
+        {
+            source += "uniform vec3 ambientColor;\n";
+            source += "uniform float opacity;\n";
+        }
         source += "varying vec4 diff;\n";
         if (props.lightModel == ShaderProperties::SpecularModel)
         {
@@ -1704,19 +1792,22 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
         }
     }
 
+    if (props.hasShadowMap())
+        source += "uniform mat4 ShadowMatrix0;\n";
+
     // Begin main() function
     source += "\nvoid main(void)\n{\n";
     if (props.isViewDependent() || props.hasScattering())
     {
-        source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
+        source += "vec3 eyeDir = normalize(eyePosition - in_Position.xyz);\n";
         if (!props.usesTangentSpaceLighting())
         {
-            source += "float NV = dot(gl_Normal, eyeDir);\n";
+            source += "float NV = dot(in_Normal, eyeDir);\n";
         }
     }
     else if (props.lightModel == ShaderProperties::SpecularModel)
     {
-        source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
+        source += "vec3 eyeDir = normalize(eyePosition - in_Position.xyz);\n";
     }
 
     source += "float NL;\n";
@@ -1733,7 +1824,7 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
 
     if (props.usesTangentSpaceLighting())
     {
-        source += "vec3 bitangent = cross(gl_Normal, tangent);\n";
+        source += "vec3 bitangent = cross(in_Normal, in_Tangent);\n";
         if (props.isViewDependent() &&
             props.lightModel != ShaderProperties::SpecularModel)
         {
@@ -1742,16 +1833,31 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
     }
     else if (props.lightModel == ShaderProperties::PerPixelSpecularModel)
     {
-        source += "normal = gl_Normal;\n";
+        source += "normal = in_Normal;\n";
     }
     else if (props.usesShadows())
     {
     }
     else
     {
-        source += "diff = vec4(ambientColor, opacity);\n";
+        if (props.lightModel == ShaderProperties::UnlitModel)
+        {
+            if ((props.texUsage & ShaderProperties::VertexColors) != 0)
+                source += "diff = in_Color;\n";
+            else
+                source += "diff = vec4(1.0);\n";
+        }
+        else
+        {
+            source += "diff = vec4(ambientColor, opacity);\n";
+        }
         if (props.hasSpecular())
             source += "spec = vec4(0.0, 0.0, 0.0, 0.0);\n";
+    }
+
+    if (props.hasShadowMap())
+    {
+        source += "cosNormalLightDir = dot(in_Normal, lights[0].direction);\n";
     }
 
     for (unsigned int i = 0; i < props.nLights; i++)
@@ -1822,12 +1928,12 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
     if (props.hasRingShadows())
     {
         source += "vec3 ringShadowProj;\n";
-        source += "float t = -(dot(gl_Vertex.xyz, ringPlane.xyz) + ringPlane.w);\n";
+        source += "float t = -(dot(in_Position.xyz, ringPlane.xyz) + ringPlane.w);\n";
         for (unsigned int j = 0; j < props.nLights; j++)
         {
             if (props.hasRingShadowForLight(j))
             {
-                source += "ringShadowProj = gl_Vertex.xyz + " +
+                source += "ringShadowProj = in_Position.xyz + " +
                   LightProperty(j, "direction") +
                   " * max(0.0, t / dot(" +
                   LightProperty(j, "direction") + ", ringPlane.xyz));\n";
@@ -1861,11 +1967,11 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
                 // fp32 texture serving as a lookup table.
 #if 0
                 // Compute the intersection of the sun direction and the cloud layer (currently assumed to be a sphere)
-                source += "    float rq = dot(" + LightProperty(j, "direction") + ", gl_Vertex.xyz);\n";
-                source += "    float qq = dot(gl_Vertex.xyz, gl_Vertex.xyz) - cloudHeight * cloudHeight;\n";
+                source += "    float rq = dot(" + LightProperty(j, "direction") + ", in_Position.xyz);\n";
+                source += "    float qq = dot(in_Position.xyz, in_Position.xyz) - cloudHeight * cloudHeight;\n";
                 source += "    float d = sqrt(rq * rq - qq);\n";
-                source += "    vec3 cloudSpherePos = (gl_Vertex.xyz + (-rq + d) * " + LightProperty(j, "direction") + ");\n";
-                //source += "    vec3 cloudSpherePos = gl_Vertex.xyz;\n";
+                source += "    vec3 cloudSpherePos = (in_Position.xyz + (-rq + d) * " + LightProperty(j, "direction") + ");\n";
+                //source += "    vec3 cloudSpherePos = in_Position.xyz;\n";
 
                 // Find the texture coordinates at this point on the sphere by converting from rectangular to spherical; this is an
                 // expensive calculation to perform per vertex.
@@ -1895,13 +2001,16 @@ ShaderManager::buildVertexShader(const ShaderProperties& props)
 
     if (props.hasEclipseShadows())
     {
-        source += "position_obj = gl_Vertex.xyz;\n";
+        source += "position_obj = in_Position.xyz;\n";
     }
 
     if ((props.texUsage & ShaderProperties::PointSprite) != 0)
         source += PointSizeCalculation();
 
-    source += "gl_Position = ftransform();\n";
+    if (props.hasShadowMap())
+        source += "shadowTexCoord0 = ShadowMatrix0 * vec4(in_Position.xyz, 1);\n";
+
+    source += "gl_Position = gl_ModelViewProjectionMatrix * in_Position;\n";
     source += "}\n";
 
     DumpVSSource(source);
@@ -2081,6 +2190,12 @@ ShaderManager::buildFragmentShader(const ShaderProperties& props)
         source += DeclareVarying("pointFade", Shader_Float);
     }
 
+    if (props.hasShadowMap())
+    {
+        source += DeclareUniform("shadowMapSize", Shader_Float);
+        source += CalculateShadow();
+    }
+
     source += "\nvoid main(void)\n{\n";
     source += "vec4 color;\n";
     if (props.usesTangentSpaceLighting() ||
@@ -2205,6 +2320,7 @@ ShaderManager::buildFragmentShader(const ShaderProperties& props)
     {
         source += "float NH;\n";
         source += "vec3 n = normalize(normal);\n";
+        source += "float shadowMapCoeff = 1.0;\n";
 
         // Sum the contributions from each light source
         for (unsigned i = 0; i < props.nLights; i++)
@@ -2222,6 +2338,12 @@ ShaderManager::buildFragmentShader(const ShaderProperties& props)
             source += "diff.rgb += " + illum + " * " + FragLightProperty(i, "color") + ";\n";
             source += "NH = max(0.0, dot(n, normalize(" + LightHalfVector(i) + ")));\n";
             source += "spec.rgb += " + illum + " * pow(NH, shininess) * " + FragLightProperty(i, "specColor") + ";\n";
+            if (props.hasShadowMap() && i == 0)
+            {
+                source += "shadowMapCoeff = calculateShadow();\n";
+                source += "diff.rgb *= shadowMapCoeff;\n";
+                source += "spec.rgb *= shadowMapCoeff;\n";
+            }
         }
     }
     else if (props.usesShadows())
@@ -2343,6 +2465,7 @@ GLVertexShader*
 ShaderManager::buildRingsVertexShader(const ShaderProperties& props)
 {
     string source(CommonHeader);
+    source += CommonAttribs;
 
     source += DeclareLights(props);
     source += "uniform vec3 eyePosition;\n";
@@ -2361,7 +2484,7 @@ ShaderManager::buildRingsVertexShader(const ShaderProperties& props)
     source += "\nvoid main(void)\n{\n";
 
     // Get the normalized direction from the eye to the vertex
-    source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
+    source += "vec3 eyeDir = normalize(eyePosition - in_Position.xyz);\n";
 
     for (unsigned int i = 0; i < props.nLights; i++)
     {
@@ -2374,15 +2497,15 @@ ShaderManager::buildRingsVertexShader(const ShaderProperties& props)
 
     if (props.hasEclipseShadows() != 0)
     {
-        source += "position_obj = gl_Vertex.xyz;\n";
+        source += "position_obj = in_Position.xyz;\n";
         for (unsigned int i = 0; i < props.nLights; i++)
         {
-            source += ShadowDepth(i) + " = dot(gl_Vertex.xyz, " +
+            source += ShadowDepth(i) + " = dot(in_Position.xyz, " +
                        LightProperty(i, "direction") + ");\n";
         }
     }
 
-    source += "gl_Position = ftransform();\n";
+    source += "gl_Position = gl_ModelViewProjectionMatrix * in_Position;\n";
     source += "}\n";
 
     DumpVSSource(source);
@@ -2483,6 +2606,7 @@ GLVertexShader*
 ShaderManager::buildRingsVertexShader(const ShaderProperties& props)
 {
     string source(CommonHeader);
+    source += CommonAttribs;
 
     source += DeclareLights(props);
 
@@ -2500,17 +2624,17 @@ ShaderManager::buildRingsVertexShader(const ShaderProperties& props)
     if (props.texUsage & ShaderProperties::DiffuseTexture)
         source += "diffTexCoord = " + TexCoord2D(0) + ";\n";
 
-    source += "position_obj = gl_Vertex.xyz;\n";
+    source += "position_obj = in_Position.xyz;\n";
     if (props.hasEclipseShadows())
     {
         for (unsigned int i = 0; i < props.nLights; i++)
         {
-            source += ShadowDepth(i) + " = dot(gl_Vertex.xyz, " +
+            source += ShadowDepth(i) + " = dot(in_Position.xyz, " +
                        LightProperty(i, "direction") + ");\n";
         }
     }
 
-    source += "gl_Position = ftransform();\n";
+    source += "gl_Position = gl_ModelViewProjectionMatrix * in_Position;\n";
     source += "}\n";
 
     DumpVSSource(source);
@@ -2635,6 +2759,7 @@ GLVertexShader*
 ShaderManager::buildAtmosphereVertexShader(const ShaderProperties& props)
 {
     string source(CommonHeader);
+    source += CommonAttribs;
 
     source += DeclareLights(props);
     source += "uniform vec3 eyePosition;\n";
@@ -2650,13 +2775,13 @@ ShaderManager::buildAtmosphereVertexShader(const ShaderProperties& props)
     // Begin main() function
     source += "\nvoid main(void)\n{\n";
     source += "float NL;\n";
-    source += "vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
-    source += "float NV = dot(gl_Normal, eyeDir);\n";
+    source += "vec3 eyeDir = normalize(eyePosition - in_Position.xyz);\n";
+    source += "float NV = dot(in_Normal, eyeDir);\n";
 
     source += AtmosphericEffects(props);
 
     source += "eyeDir_obj = eyeDir;\n";
-    source += "gl_Position = ftransform();\n";
+    source += "gl_Position = gl_ModelViewProjectionMatrix * in_Position;\n";
     source += "}\n";
 
     DumpVSSource(source);
@@ -2729,6 +2854,7 @@ GLVertexShader*
 ShaderManager::buildEmissiveVertexShader(const ShaderProperties& props)
 {
     string source(CommonHeader);
+    source += CommonAttribs;
 
     source += "uniform float opacity;\n";
 
@@ -2746,7 +2872,7 @@ ShaderManager::buildEmissiveVertexShader(const ShaderProperties& props)
     if (props.texUsage & ShaderProperties::PointSprite)
     {
         source += "uniform float pointScale;\n";
-        source += "attribute float pointSize;\n";
+        source += "attribute float in_PointSize;\n";
         source += "varying float pointFade;\n";
     }
 
@@ -2764,7 +2890,7 @@ ShaderManager::buildEmissiveVertexShader(const ShaderProperties& props)
     // Set the color.
     string colorSource;
     if (props.texUsage & ShaderProperties::VertexColors)
-        colorSource = "gl_Color.rgb";
+        colorSource = "in_Color.rgb";
     else
         colorSource = LightProperty(0, "diffuse");
 
@@ -2774,7 +2900,7 @@ ShaderManager::buildEmissiveVertexShader(const ShaderProperties& props)
     if ((props.texUsage & ShaderProperties::PointSprite) != 0)
         source += PointSizeCalculation();
 
-    source += "    gl_Position = ftransform();\n";
+    source += "    gl_Position = gl_ModelViewProjectionMatrix * in_Position;\n";
 
     source += "}\n";
     // End of main()
@@ -2846,6 +2972,7 @@ ShaderManager::buildParticleVertexShader(const ShaderProperties& props)
     ostringstream source;
 
     source << CommonHeader;
+    source << CommonAttribs;
 
     source << "// PARTICLE SHADER\n";
     source << "// shadow count: " << props.shadowCounts << endl;
@@ -2859,7 +2986,7 @@ ShaderManager::buildParticleVertexShader(const ShaderProperties& props)
     if (props.texUsage & ShaderProperties::PointSprite)
     {
         source << "uniform float pointScale;\n";
-        source << "attribute float pointSize;\n";
+        source << "attribute float in_PointSize;\n";
         source << DeclareVarying("pointFade", Shader_Float);
     }
 
@@ -2878,7 +3005,7 @@ ShaderManager::buildParticleVertexShader(const ShaderProperties& props)
     float miePhaseAsymmetry = 1.55f * g - 0.55f * g * g * g;
     source << "    float mieK = " << miePhaseAsymmetry << ";\n";
 
-    source << "    vec3 eyeDir = normalize(eyePosition - gl_Vertex.xyz);\n";
+    source << "    vec3 eyeDir = normalize(eyePosition - in_Position.xyz);\n";
     source << "    float brightness = 0.0;\n";
     for (unsigned int i = 0; i < min(1u, props.nLights); i++)
     {
@@ -2893,13 +3020,13 @@ ShaderManager::buildParticleVertexShader(const ShaderProperties& props)
 #endif
 
     // Set the color. Should *always* use vertex colors for color and opacity.
-    source << "    gl_FrontColor = gl_Color * brightness;\n";
+    source << "    gl_FrontColor = in_Color * brightness;\n";
 
     // Optional point size
     if ((props.texUsage & ShaderProperties::PointSprite) != 0)
         source << PointSizeCalculation();
 
-    source << "    gl_Position = ftransform();\n";
+    source << "    gl_Position = gl_ModelViewProjectionMatrix * in_Position;\n";
 
     source << "}\n";
     // End of main()
@@ -2977,80 +3104,6 @@ ShaderManager::buildParticleFragmentShader(const ShaderProperties& props)
     return status == ShaderStatus_OK ? fs : nullptr;
 }
 
-GLVertexShader*
-ShaderManager::buildSimpleVertexShader(uint32_t props)
-{
-    ostringstream source;
-
-    source << CommonHeader;
-
-    if (props & ShaderProperties::PerVertexColor)
-        source << DeclareVarying("color", Shader_Vector4);
-
-    if (props & ShaderProperties::HasTexture)
-        source << DeclareVarying("texCoord", Shader_Vector2);
-
-    // Begin main()
-    source << "\nvoid main(void)\n";
-    source << "{\n";
-
-    if (props & ShaderProperties::PerVertexColor)
-        source << "    color = gl_Color;\n";
-    if (props & ShaderProperties::HasTexture)
-        source << "    texCoord = gl_MultiTexCoord0.st;\n";
-    source << "    gl_Position = ftransform();\n";
-
-    source << "}\n";
-    // End of main()
-
-    DumpVSSource(source);
-
-    GLVertexShader* vs = nullptr;
-    GLShaderStatus status = GLShaderLoader::CreateVertexShader(source.str(), &vs);
-    return status == ShaderStatus_OK ? vs : nullptr;
-}
-
-
-GLFragmentShader*
-ShaderManager::buildSimpleFragmentShader(uint32_t props)
-{
-    ostringstream source;
-
-    source << CommonHeader;
-
-    if (props & ShaderProperties::UniformColor)
-        source << DeclareUniform("color", Shader_Vector4);
-
-    if (props & ShaderProperties::HasTexture)
-    {
-        source << DeclareUniform("tex", Shader_Sampler2D);
-        source << DeclareVarying("texCoord", Shader_Vector2);
-    }
-
-    if (props & ShaderProperties::PerVertexColor)
-        source << DeclareVarying("color", Shader_Vector4);
-
-    // Begin main()
-    source << "\nvoid main(void)\n";
-    source << "{\n";
-
-    if (props & ShaderProperties::HasTexture)
-        source << "    gl_FragColor = texture2D(tex, texCoord) * color;\n";
-    else
-        source << "    gl_FragColor = color;\n";
-
-    source << "}\n";
-    // End of main()
-
-    DumpFSSource(source);
-
-    GLFragmentShader* fs = nullptr;
-    GLShaderStatus status = GLShaderLoader::CreateFragmentShader(source.str(), &fs);
-    return status == ShaderStatus_OK ? fs : nullptr;
-}
-
-
-
 CelestiaGLProgram*
 ShaderManager::buildProgram(const ShaderProperties& props)
 {
@@ -3060,12 +3113,7 @@ ShaderManager::buildProgram(const ShaderProperties& props)
     GLVertexShader* vs = nullptr;
     GLFragmentShader* fs = nullptr;
 
-    if (props.simpleProps != 0)
-    {
-        vs = buildSimpleVertexShader(props.simpleProps);
-        fs = buildSimpleFragmentShader(props.simpleProps);
-    }
-    else if (props.lightModel == ShaderProperties::RingIllumModel)
+    if (props.lightModel == ShaderProperties::RingIllumModel)
     {
         vs = buildRingsVertexShader(props);
         fs = buildRingsFragmentShader(props);
@@ -3096,17 +3144,46 @@ ShaderManager::buildProgram(const ShaderProperties& props)
         status = GLShaderLoader::CreateProgram(*vs, *fs, &prog);
         if (status == ShaderStatus_OK)
         {
+            glBindAttribLocation(prog->getID(),
+                                 CelestiaGLProgram::VertexCoordAttributeIndex,
+                                 "in_Position");
+
+            glBindAttribLocation(prog->getID(),
+                                 CelestiaGLProgram::NormalAttributeIndex,
+                                 "in_Normal");
+
+            glBindAttribLocation(prog->getID(),
+                                 CelestiaGLProgram::TextureCoord0AttributeIndex,
+                                 "in_TexCoord0");
+
+            glBindAttribLocation(prog->getID(),
+                                 CelestiaGLProgram::TextureCoord1AttributeIndex,
+                                 "in_TexCoord1");
+
+            glBindAttribLocation(prog->getID(),
+                                 CelestiaGLProgram::TextureCoord2AttributeIndex,
+                                 "in_TexCoord2");
+
+            glBindAttribLocation(prog->getID(),
+                                 CelestiaGLProgram::TextureCoord3AttributeIndex,
+                                 "in_TexCoord3");
+
+            glBindAttribLocation(prog->getID(),
+                                 CelestiaGLProgram::ColorAttributeIndex,
+                                 "in_Color");
+
             if (props.texUsage & ShaderProperties::NormalTexture)
             {
-                // Tangents always in attribute 6 (should be a constant
-                // someplace)
-                glBindAttribLocation(prog->getID(), 6, "tangent");
+                glBindAttribLocation(prog->getID(),
+                                     CelestiaGLProgram::TangentAttributeIndex,
+                                     "in_Tangent");
             }
 
             if (props.texUsage & ShaderProperties::PointSprite)
             {
-                // Point size is always in attribute 7
-                glBindAttribLocation(prog->getID(), 7, "pointSize");
+                glBindAttribLocation(prog->getID(),
+                                     CelestiaGLProgram::PointSizeAttributeIndex,
+                                     "in_PointSize");
             }
 
             status = prog->link();
@@ -3156,12 +3233,41 @@ ShaderManager::buildProgram(const std::string& vs, const std::string& fs)
     status = GLShaderLoader::CreateProgram(vs, fs, &prog);
     if (status == ShaderStatus_OK)
     {
-        // Tangents always in attribute 6 (should be a constant
-        // someplace)
-        glBindAttribLocation(prog->getID(), 6, "tangent");
+        glBindAttribLocation(prog->getID(),
+                             CelestiaGLProgram::VertexCoordAttributeIndex,
+                             "in_Position");
 
-        // Point size is always in attribute 7
-        glBindAttribLocation(prog->getID(), 7, "pointSize");
+        glBindAttribLocation(prog->getID(),
+                             CelestiaGLProgram::NormalAttributeIndex,
+                             "in_Normal");
+
+        glBindAttribLocation(prog->getID(),
+                             CelestiaGLProgram::TextureCoord0AttributeIndex,
+                             "in_TexCoord0");
+
+        glBindAttribLocation(prog->getID(),
+                             CelestiaGLProgram::TextureCoord1AttributeIndex,
+                             "in_TexCoord1");
+
+        glBindAttribLocation(prog->getID(),
+                             CelestiaGLProgram::TextureCoord2AttributeIndex,
+                             "in_TexCoord2");
+
+        glBindAttribLocation(prog->getID(),
+                             CelestiaGLProgram::TextureCoord3AttributeIndex,
+                             "in_TexCoord3");
+
+        glBindAttribLocation(prog->getID(),
+                             CelestiaGLProgram::ColorAttributeIndex,
+                             "in_Color");
+
+        glBindAttribLocation(prog->getID(),
+                             CelestiaGLProgram::TangentAttributeIndex,
+                             "in_Tangent");
+
+        glBindAttribLocation(prog->getID(),
+                             CelestiaGLProgram::PointSizeAttributeIndex,
+                             "in_PointSize");
 
         status = prog->link();
     }
@@ -3330,6 +3436,11 @@ CelestiaGLProgram::initParameters()
         shadowTextureOffset = floatParam("cloudShadowTexOffset");
     }
 
+    if (props.texUsage & ShaderProperties::ShadowMapTexture)
+    {
+        ShadowMatrix0       = mat4Param("ShadowMatrix0");
+    }
+
     if (props.hasScattering())
     {
         mieCoeff             = floatParam("mieCoeff");
@@ -3351,11 +3462,6 @@ CelestiaGLProgram::initParameters()
     if ((props.texUsage & ShaderProperties::PointSprite) != 0)
     {
         pointScale           = floatParam("pointScale");
-    }
-
-    if (props.simpleProps & ShaderProperties::UniformColor)
-    {
-        color                = vec4Param("color");
     }
 }
 
@@ -3419,6 +3525,13 @@ CelestiaGLProgram::initSamplers()
     if (props.texUsage & ShaderProperties::CloudShadowTexture)
     {
         int slot = glGetUniformLocation(program->getID(), "cloudShadowTex");
+        if (slot != -1)
+            glUniform1i(slot, nSamplers++);
+    }
+
+    if (props.texUsage & ShaderProperties::ShadowMapTexture)
+    {
+        int slot = glGetUniformLocation(program->getID(), "shadowMapTex0");
         if (slot != -1)
             glUniform1i(slot, nSamplers++);
     }
@@ -3577,9 +3690,9 @@ CelestiaGLProgram::setAtmosphereParameters(const Atmosphere& atmosphere,
     // fallse off exponentially with height above the planet's surface, so the actual
     // radius is infinite. That's a bit impractical, so well just render the portion
     // out to the point where the density is some fraction of the surface density.
-    float skySphereRadius = atmPlanetRadius + -atmosphere.mieScaleHeight * (float) log(AtmosphereExtinctionThreshold);
+    float skySphereRadius = atmPlanetRadius + -atmosphere.mieScaleHeight * log(AtmosphereExtinctionThreshold);
 
-    float tMieCoeff        = atmosphere.mieCoeff * objRadius;
+    float tMieCoeff           = atmosphere.mieCoeff * objRadius;
     Vector3f tRayleighCoeff   = atmosphere.rayleighCoeff * objRadius;
     Vector3f tAbsorptionCoeff = atmosphere.absorptionCoeff * objRadius;
 

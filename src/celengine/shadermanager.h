@@ -24,7 +24,6 @@ class ShaderProperties
 {
  public:
     ShaderProperties() = default;
-    ShaderProperties(uint32_t p) : simpleProps(p) {};
     bool usesShadows() const;
     bool usesFragmentLighting() const;
     bool usesTangentSpaceLighting() const;
@@ -41,6 +40,7 @@ class ShaderProperties
     void setCloudShadowForLight(unsigned int lightIndex, bool enabled);
     bool hasCloudShadowForLight(unsigned int lightIndex) const;
     bool hasCloudShadows() const;
+    bool hasShadowMap() const;
 
     bool hasShadowsForLight(unsigned int) const;
     bool hasSharedTextureCoords() const;
@@ -60,6 +60,7 @@ class ShaderProperties
      CloudShadowTexture      =   0x80,
      CompressedNormalTexture =  0x100,
      EmissiveTexture         =  0x200,
+     ShadowMapTexture        =  0x400,
      VertexOpacities         =  0x800,
      VertexColors            = 0x1000,
      Scattering              = 0x2000,
@@ -79,6 +80,7 @@ class ShaderProperties
      ParticleDiffuseModel  = 7,
      EmissiveModel         = 8,
      ParticleModel         = 9,
+     UnlitModel            = 10,
  };
 
  enum
@@ -86,13 +88,6 @@ class ShaderProperties
      VolumetricScatteringEffect      = 0x0001,
      VolumetricAbsorptionEffect      = 0x0002,
      VolumetricEmissionEffect        = 0x0004,
- };
-
- enum : uint32_t
- {
-     UniformColor   = 0x0001,
-     PerVertexColor = 0x0002,
-     HasTexture     = 0x0004
  };
 
  public:
@@ -111,30 +106,7 @@ class ShaderProperties
     //   Bit  4,   on for cloud shadows
     uint32_t shadowCounts{ 0 };
 
-    // Properties of "simple" shaders. Other properties are ignored.
-    uint32_t simpleProps{ 0 };
-
  private:
-    // This struct is required to compare keys in ShaderManager
-    // Default one doesn't work properly in some cases.
-    struct Cmp
-    {
-        bool operator()(const ShaderProperties& lhs, const ShaderProperties& rhs) const
-        {
-            if (lhs.simpleProps != 0 && rhs.simpleProps != 0)
-                return lhs.simpleProps < rhs.simpleProps;
-            if (lhs.nLights != rhs.nLights)
-                return lhs.nLights < rhs.nLights;
-            if (lhs.texUsage != rhs.texUsage)
-                return lhs.texUsage < rhs.texUsage;
-            if (lhs.lightModel != rhs.lightModel)
-                return lhs.lightModel < rhs.lightModel;
-            if (lhs.shadowCounts != rhs.shadowCounts)
-                return lhs.shadowCounts < rhs.shadowCounts;
-            return lhs.effects < rhs.effects;
-        }
-    };
-
     enum
     {
         ShadowBitsPerLight = 8,
@@ -201,9 +173,15 @@ class CelestiaGLProgram
 
     enum
     {
-        VertexCoordAttributeIndex = 0,
-        TangentAttributeIndex     = 6,
-        PointSizeAttributeIndex   = 7,
+        VertexCoordAttributeIndex   = 0,
+        NormalAttributeIndex        = 1,
+        TextureCoord0AttributeIndex = 2,
+        TextureCoord1AttributeIndex = 3,
+        TextureCoord2AttributeIndex = 4,
+        TextureCoord3AttributeIndex = 5,
+        TangentAttributeIndex       = 6,
+        PointSizeAttributeIndex     = 7,
+        ColorAttributeIndex         = 8,
     };
 
  public:
@@ -273,6 +251,9 @@ class CelestiaGLProgram
     // Color sent as a uniform
     Vec4ShaderParameter color;
 
+    // Matrix used to project to light space
+    Mat4ShaderParameter ShadowMatrix0;
+
     CelestiaGLProgramShadow shadows[MaxShaderLights][MaxShaderEclipseShadows];
 
     FloatShaderParameter floatParam(const std::string&);
@@ -323,10 +304,7 @@ class ShaderManager
     GLVertexShader* buildParticleVertexShader(const ShaderProperties&);
     GLFragmentShader* buildParticleFragmentShader(const ShaderProperties&);
 
-    GLVertexShader* buildSimpleVertexShader(uint32_t);
-    GLFragmentShader* buildSimpleFragmentShader(uint32_t);
-
-    std::map<ShaderProperties, CelestiaGLProgram*, ShaderProperties::Cmp> dynamicShaders;
+    std::map<ShaderProperties, CelestiaGLProgram*> dynamicShaders;
     std::map<std::string, CelestiaGLProgram*> staticShaders;
 };
 

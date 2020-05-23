@@ -96,11 +96,11 @@ First you need a C++ compiler able to compile C++11 code (GCC 4.8.1 or later,
 Clang 3.3 or later), CMake, GNU Make or Ninja.
 
 Then you need to have the following devel components installed before Celestia
-will build: OpenGL, glu, glew, theora, libjpeg, and libpng. Optional packages
-are fmtlib, Eigen3, Qt5, Gtk2 and glut.
+will build: OpenGL, glu, libepoxy, theora, libjpeg, and libpng. Optional
+packages are fmtlib, Eigen3, Qt5, Gtk2 and glut.
 
 For example on modern Debian-derived system you need to install the following
-packages: libglew-dev, libjpeg-dev, libpng-dev, libtheora-dev, libgl1-mesa-dev,
+packages: libepoxy-dev, libjpeg-dev, libpng-dev, libtheora-dev, libgl1-mesa-dev,
 libglu1-mesa-dev. Then you may want to install libeigen3-dev, libfmt-dev;
 qtbase5-dev, qtbase5-dev-tools and libqt5opengl5-dev if you want to build with
 Qt5 interface; libgtk2.0-dev and libgtkglext1-dev to build with legacy Gtk2
@@ -117,10 +117,13 @@ make
 sudo make install
 ```
 
-[*] `INTERFACE` must be replaced with one of "`QT`", "`GTK`", or "`GLUT`".
+[*] `INTERFACE` must be replaced with one of "`QT`", "`GTK`", "`SDL`" or
+"`GLUT`".
 
-Three interfaces are available for Celestia on Unix-like systems:
+Four interfaces are available for Celestia on Unix-like systems:
 - GLUT: minimal interface, barebone Celestia core with no toolbar or menu...
+       Disabled by default.
+- SDL: minimal interface, barebone Celestia core with no toolbar or menu...
        Disabled by default.
 - GTK: A full interface with minimal dependencies, adds a menu, a configuration
        dialog some other utilities. Legacy interface, may lack some new
@@ -159,7 +162,7 @@ and vcpkg (*).
 Install required packages:
 
 ```
-vcpkg install libpng libjpeg-turbo gettext lua fmt glew eigen3
+vcpkg install libpng libjpeg-turbo gettext lua fmt libepoxy eigen3
 ```
 
 Install optional packages:
@@ -220,7 +223,7 @@ pacman -S base-devel
 pacman -S git
 pacman -S mingw-w64-x86_64-cmake
 pacman -S mingw-w64-x86_64-qt5
-pacman -S mingw-w64-x86_64-freeglut mingw-w64-x86_64-glew mingw-w64-x86_64-lua
+pacman -S mingw-w64-x86_64-freeglut mingw-w64-x86_64-libepoxy mingw-w64-x86_64-lua
 pacman -S mingw-w64-x86_64-libtheora mingw-w64-x86_64-mesa
 ```
 
@@ -228,6 +231,7 @@ Install optional packages:
 
 ```
 pacman -S mingw-w64-x86_64-fmt mingw-w64-x86_64-eigen3 mingw-w64-x86_64-luajit
+pacman -S mingw-w64-x86_64-sld2
 ```
 
 Clone the source and go to the source directory.
@@ -274,23 +278,23 @@ Install Homebrew
 Install required packages:
 
 ```
-brew install cmake cspice fmt gettext libpng lua qt5 jpeg eigen
+brew install cmake fmt gettext libepoxy libpng lua qt5 jpeg eigen
 ```
 
-Build GLEW from source (Homebrew's precompiled GLEW has wrong linking path):
+Install optional packages:
 
 ```
-brew install glew --build-from-source
+brew install cspice
 ```
 
-Clone the source and go to the source directory.
+Follow common building instructions to fetch the source.
 
 Configure and build:
 
 ```
 mkdir build
 cd build
-cmake -DENABLE_SPICE=ON ..
+cmake ..
 make -jN
 ```
 
@@ -303,8 +307,8 @@ make install
 ```
 
 Celestia will be installed into /usr/local by default, with data files landing
-in /usr/local/share/celestia, but you may specify a new location with the
-following option to cmake: `-DCMAKE_INSTALL_PREFIX=/another/path`.
+in /usr/local/share/celestia, but you may want to specify a new location with
+the following option to cmake: `-DCMAKE_INSTALL_PREFIX=/another/path`.
 
 To build the application bundle, pass -DNATIVE_OSX_APP=ON to the cmake command,
 the application bundle will be located in the "build" folder that you previously
@@ -325,10 +329,12 @@ List of supported parameters (passed as `-DPARAMETER=VALUE`):
 | ENABLE_GLUT          | bool | OFF     | Build simple Glut frontend
 | ENABLE_GTK           | bool | \*\*OFF   | Build legacy GTK2 frontend
 | ENABLE_QT            | bool | ON      | Build Qt frontend
+| ENABLE_SDL           | bool | OFF     | Build SQL frontend
 | ENABLE_WIN           | bool | \*\*\*ON   | Build Windows native frontend
 | ENABLE_THEORA        | bool | \*\*ON    | Support video capture to OGG Theora
 | ENABLE_TOOLS         | bool | OFF     | Build tools for Celestia data files
 | ENABLE_TTF           | bool | \*\*\*\*OFF | Build with FreeType support
+| ENABLE_DATA          | bool | OFF     | Use CelestiaContent submodule for data
 | NATIVE_OSX_APP       | bool | OFF     | Support native OSX data paths
 
 Notes:  
@@ -363,4 +369,5 @@ Here's the table which provides executable file names accordingly to interface:
 | Qt5       | celestia-qt
 | GTK       | celestia-gtk
 | GLUT      | celestia-glut
+| SDL       | celestia-sdl
 | WIN       | celestia-win

@@ -177,12 +177,10 @@ unsigned int Globular::cSlot(float conc) const
     return (unsigned int) floor((conc - MinC) / BinWidth);
 }
 
-
 const char* Globular::getType() const
 {
     return "Globular";
 }
-
 
 void Globular::setType(const std::string& /*typeStr*/)
 {
@@ -193,26 +191,9 @@ float Globular::getDetail() const
     return detail;
 }
 
-
 void Globular::setDetail(float d)
 {
     detail = d;
-}
-
-string Globular::getCustomTmpName() const
-{
-    if (customTmpName == nullptr)
-        return "";
-    else
-        return *customTmpName;
-}
-
-void Globular::setCustomTmpName(const string& tmpNameStr)
-{
-    if (customTmpName == nullptr)
-        customTmpName = new string(tmpNameStr);
-    else
-        *customTmpName = tmpNameStr;
 }
 
 float Globular::getCoreRadius() const
@@ -301,10 +282,6 @@ bool Globular::load(AssociativeArray* params, const fs::path& resPath)
     if (params->getNumber("Detail", detail))
         setDetail((float) detail);
 
-    string customTmpName;
-    if (params->getString("CustomTemplate", customTmpName ))
-        setCustomTmpName(customTmpName);
-
     double coreRadius;
     if (params->getAngle("CoreRadius", coreRadius, 1.0 / MINUTES_PER_DEG))
     {
@@ -334,7 +311,7 @@ void initGlobularData(VertexObject& vo, vector<GBlob>* points, GLint sizeLoc, GL
     struct GlobularVtx
     {
         Vector3f position;
-        Vector3f color;
+        Color    color;
         float    starSize;
         float    eta;
     };
@@ -342,10 +319,10 @@ void initGlobularData(VertexObject& vo, vector<GBlob>* points, GLint sizeLoc, GL
     globularVtx.reserve(4 + points->size());
 
     // Reuse the buffer for a tidal
-    globularVtx.push_back({{-1, -1, 0}, {0, 0, 0}, 0, 0});
-    globularVtx.push_back({{ 1, -1, 0}, {0, 0, 0}, 1, 0});
-    globularVtx.push_back({{ 1, 1, 0},  {0, 0, 0}, 1, 1});
-    globularVtx.push_back({{-1, 1, 0},  {0, 0, 0}, 0, 1});
+    globularVtx.push_back({{-1.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0.0f, 0.0f});
+    globularVtx.push_back({{ 1.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f});
+    globularVtx.push_back({{ 1.0f,  1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 1.0f, 1.0f});
+    globularVtx.push_back({{-1.0f,  1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0.0f, 1.0f});
 
     // regarding used constants:
     // pow2 = 128;           // Associate "Red Giants" with the 128 biggest star-sprites
@@ -382,8 +359,7 @@ void initGlobularData(VertexObject& vo, vector<GBlob>* points, GLint sizeLoc, GL
          * sizes (while pow2 = 128).
          */
 
-        Color col    = (pow2 < 256) ? colorTable[255] : colorTable[b.colorIndex];
-        vtx.color    = col.toVector3();
+        vtx.color    = (pow2 < 256) ? colorTable[255] : colorTable[b.colorIndex];
 
         globularVtx.push_back(vtx);
     }
@@ -391,11 +367,9 @@ void initGlobularData(VertexObject& vo, vector<GBlob>* points, GLint sizeLoc, GL
     vo.allocate(globularVtx.size() * sizeof(GlobularVtx), globularVtx.data());
     vo.setVertices(3, GL_FLOAT, false, sizeof(GlobularVtx), 0);
     vo.setTextureCoords(2, GL_FLOAT, false, sizeof(GlobularVtx), offsetof(GlobularVtx, starSize)); //HACK!!! used only for tidal
-    vo.setColors(3, GL_FLOAT, false, sizeof(GlobularVtx), offsetof(GlobularVtx, color));
-    if (sizeLoc != -1)
-        vo.setVertexAttrib(sizeLoc, 1, GL_FLOAT, false, sizeof(GlobularVtx), offsetof(GlobularVtx, starSize));
-    if (etaLoc != -1)
-        vo.setVertexAttrib(etaLoc,  1, GL_FLOAT, false, sizeof(GlobularVtx), offsetof(GlobularVtx, eta));
+    vo.setColors(4, GL_UNSIGNED_BYTE, true, sizeof(GlobularVtx), offsetof(GlobularVtx, color));
+    vo.setVertexAttribArray(sizeLoc, 1, GL_FLOAT, false, sizeof(GlobularVtx), offsetof(GlobularVtx, starSize));
+    vo.setVertexAttribArray(etaLoc,  1, GL_FLOAT, false, sizeof(GlobularVtx), offsetof(GlobularVtx, eta));
 }
 
 
@@ -466,9 +440,10 @@ void Globular::renderGlobularPointSprites(
     assert(globularTex != nullptr);
 
     glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
     glEnable(GL_POINT_SPRITE);
     glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     float tidalSize = 2 * tidalRadius;
 

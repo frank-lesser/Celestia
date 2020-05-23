@@ -14,12 +14,16 @@
 #include "modelgeometry.h"
 #include "body.h"
 #include "glsupport.h"
+#include <celmath/geomutil.h>
 #include "render.h"
 
 using namespace cmod;
 using namespace Eigen;
 using namespace std;
 
+#ifndef GL_ONLY_SHADOWS
+#define GL_ONLY_SHADOWS 1
+#endif
 
 static Material defaultMaterial;
 
@@ -227,38 +231,43 @@ setStandardVertexArrays(const Mesh::VertexDescription& desc,
         return;
 
     // Set up the vertex arrays
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glVertexPointer(3, GL_FLOAT, desc.stride,
-                    reinterpret_cast<const char*>(vertexData) + position.offset);
+    glEnableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
+    glVertexAttribPointer(CelestiaGLProgram::VertexCoordAttributeIndex,
+                          3, GL_FLOAT, GL_FALSE, desc.stride,
+                          reinterpret_cast<const char*>(vertexData) + position.offset);
 
     // Set up the normal array
     switch (normal.format)
     {
     case Mesh::Float3:
-        glEnableClientState(GL_NORMAL_ARRAY);
-        glNormalPointer(GLComponentTypes[(int) normal.format],
-                        desc.stride,
-                        reinterpret_cast<const char*>(vertexData) + normal.offset);
+        glEnableVertexAttribArray(CelestiaGLProgram::NormalAttributeIndex);
+        glVertexAttribPointer(CelestiaGLProgram::NormalAttributeIndex,
+                              3, GLComponentTypes[(int) normal.format],
+                              GL_FALSE, desc.stride,
+                              reinterpret_cast<const char*>(vertexData) + normal.offset);
         break;
     default:
-        glDisableClientState(GL_NORMAL_ARRAY);
+        glDisableVertexAttribArray(CelestiaGLProgram::NormalAttributeIndex);
         break;
     }
 
+    GLint normalized = GL_TRUE;
     // Set up the color array
     switch (color0.format)
     {
     case Mesh::Float3:
     case Mesh::Float4:
+        normalized = GL_FALSE;
     case Mesh::UByte4:
-        glEnableClientState(GL_COLOR_ARRAY);
-        glColorPointer(GLComponentCounts[color0.format],
-                       GLComponentTypes[color0.format],
-                       desc.stride,
-                       reinterpret_cast<const char*>(vertexData) + color0.offset);
+        glEnableVertexAttribArray(CelestiaGLProgram::ColorAttributeIndex);
+        glVertexAttribPointer(CelestiaGLProgram::ColorAttributeIndex,
+                              GLComponentCounts[color0.format],
+                              GLComponentTypes[color0.format],
+                              normalized, desc.stride,
+                              reinterpret_cast<const char*>(vertexData) + color0.offset);
         break;
     default:
-        glDisableClientState(GL_COLOR_ARRAY);
+        glDisableVertexAttribArray(CelestiaGLProgram::ColorAttributeIndex);
         break;
     }
 
@@ -269,14 +278,16 @@ setStandardVertexArrays(const Mesh::VertexDescription& desc,
     case Mesh::Float2:
     case Mesh::Float3:
     case Mesh::Float4:
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(GLComponentCounts[(int) texCoord0.format],
-                          GLComponentTypes[(int) texCoord0.format],
-                          desc.stride,
-                          reinterpret_cast<const char*>(vertexData) + texCoord0.offset);
+        glEnableVertexAttribArray(CelestiaGLProgram::TextureCoord0AttributeIndex);
+        glVertexAttribPointer(CelestiaGLProgram::TextureCoord0AttributeIndex,
+                              GLComponentCounts[(int) texCoord0.format],
+                              GLComponentTypes[(int) texCoord0.format],
+                              GL_FALSE,
+                              desc.stride,
+                              reinterpret_cast<const char*>(vertexData) + texCoord0.offset);
         break;
     default:
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        glDisableVertexAttribArray(CelestiaGLProgram::TextureCoord0AttributeIndex);
         break;
     }
 }
@@ -356,10 +367,10 @@ GLSL_RenderContext::GLSL_RenderContext(const Renderer* renderer,
 
 GLSL_RenderContext::~GLSL_RenderContext()
 {
-    glDisableClientState(GL_VERTEX_ARRAY);
-    glDisableClientState(GL_NORMAL_ARRAY);
-    glDisableClientState(GL_COLOR_ARRAY);
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
+    glDisableVertexAttribArray(CelestiaGLProgram::NormalAttributeIndex);
+    glDisableVertexAttribArray(CelestiaGLProgram::ColorAttributeIndex);
+    glDisableVertexAttribArray(CelestiaGLProgram::TextureCoord0AttributeIndex);
     glDisableVertexAttribArray(CelestiaGLProgram::TangentAttributeIndex);
     glDisableVertexAttribArray(CelestiaGLProgram::PointSizeAttributeIndex);
 }
@@ -521,6 +532,10 @@ GLSL_RenderContext::makeCurrent(const Material& m)
             shaderProps.texUsage |= ShaderProperties::Scattering;
     }
 
+    bool hasShadowMap = shadowMap != 0 && shadowMapWidth != 0 && lightMatrix != nullptr;
+    if (hasShadowMap)
+        shaderProps.texUsage |= ShaderProperties::ShadowMapTexture;
+
     // Get a shader for the current rendering configuration
     assert(renderer != nullptr);
     CelestiaGLProgram* prog = renderer->getShaderManager().getShader(shaderProps);
@@ -533,6 +548,20 @@ GLSL_RenderContext::makeCurrent(const Material& m)
     {
         glActiveTexture(GL_TEXTURE0 + i);
         textures[i]->bind();
+    }
+
+    if (hasShadowMap)
+    {
+        glActiveTexture(GL_TEXTURE0 + nTextures);
+        glBindTexture(GL_TEXTURE_2D, shadowMap);
+#if GL_ONLY_SHADOWS
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_R_TO_TEXTURE);
+#endif
+        Matrix4f shadowBias(Matrix4f::Zero());
+        shadowBias.diagonal() = Vector4f(0.5f, 0.5f, 0.5f, 1.0f);
+        shadowBias.col(3) = Vector4f(0.5f, 0.5f, 0.5f, 1.0f);
+        prog->ShadowMatrix0 = shadowBias * (*lightMatrix);
+        prog->floatParam("shadowMapSize") = static_cast<float>(shadowMapWidth);
     }
 
     // setLightParameters() expects opacity in the alpha channel of the diffuse color
@@ -644,6 +673,13 @@ GLSL_RenderContext::setLunarLambert(float l)
     lunarLambert = l;
 }
 
+void
+GLSL_RenderContext::setShadowMap(GLuint _shadowMap, GLuint _width, const Eigen::Matrix4f *_lightMatrix)
+{
+    shadowMap      = _shadowMap;
+    shadowMapWidth = _width;
+    lightMatrix    = _lightMatrix;
+}
 
 /***** GLSL-Unlit render context ******/
 
@@ -658,10 +694,10 @@ GLSLUnlit_RenderContext::GLSLUnlit_RenderContext(const Renderer* renderer, float
 
 GLSLUnlit_RenderContext::~GLSLUnlit_RenderContext()
 {
-    glDisableClientState(GL_VERTEX_ARRAY);
-    glDisableClientState(GL_NORMAL_ARRAY);
-    glDisableClientState(GL_COLOR_ARRAY);
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
+    glDisableVertexAttribArray(CelestiaGLProgram::NormalAttributeIndex);
+    glDisableVertexAttribArray(CelestiaGLProgram::ColorAttributeIndex);
+    glDisableVertexAttribArray(CelestiaGLProgram::TextureCoord0AttributeIndex);
     glDisableVertexAttribArray(CelestiaGLProgram::TangentAttributeIndex);
     glDisableVertexAttribArray(CelestiaGLProgram::PointSizeAttributeIndex);
 }

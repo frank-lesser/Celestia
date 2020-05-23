@@ -12,6 +12,8 @@
 
 #include <string>
 #include <iosfwd>
+#include <vector>
+#include <celutil/color.h>
 
 class Console;
 class TextureFont;
@@ -58,7 +60,7 @@ class Console : public std::ostream
     void setColor(float r, float g, float b, float a) const;
     void setColor(const Color& c) const;
 
-    void moveBy(float dx, float dy, float dz = 0.0f) const;
+    void moveBy(float dx, float dy);
 
     void print(wchar_t);
     void print(char*);
@@ -74,6 +76,9 @@ class Console : public std::ostream
     int getWidth() const;
 
  private:
+    void savePos();
+    void restorePos();
+
     wchar_t* text{ nullptr };
     int nRows;
     int nColumns;
@@ -91,6 +96,18 @@ class Console : public std::ostream
     ConsoleStreamBuf sbuf;
 
     bool autoScroll{ true };
+
+    float xoffset { 0.0f };
+    struct CursorPosition
+    {
+        void reset()
+        {
+            x = y = 0.125f;
+        }
+        float x, y;
+    };
+    CursorPosition global { 0.0f, 0.0f };
+    std::vector<CursorPosition> posStack;
 };
 
 #endif // _CELENGINE_CONSOLE_H_

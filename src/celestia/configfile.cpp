@@ -98,6 +98,8 @@ CelestiaConfig* ReadCelestiaConfig(const fs::path& filename, CelestiaConfig *con
     configParams->getNumber("SolarSystemMaxDistance", maxDist);
     config->SolarSystemMaxDistance = min(max(maxDist, 1.0f), 10.0f);
 
+    config->ShadowMapSize = getUint(configParams, "ShadowMapSize", 0);
+
     double aaSamples = 1;
     configParams->getNumber("AntialiasingSamples", aaSamples);
     config->aaSamples = (unsigned int) aaSamples;
@@ -289,6 +291,7 @@ CelestiaConfig* ReadCelestiaConfig(const fs::path& filename, CelestiaConfig *con
             starTexTable->getString("N", starTexNames[StellarClass::Spectral_N]);
             starTexTable->getString("WC", starTexNames[StellarClass::Spectral_WC]);
             starTexTable->getString("WN", starTexNames[StellarClass::Spectral_WN]);
+            starTexTable->getString("WO", starTexNames[StellarClass::Spectral_WO]);
             starTexTable->getString("Unknown", starTexNames[StellarClass::Spectral_Unknown]);
             starTexTable->getString("L", starTexNames[StellarClass::Spectral_L]);
             starTexTable->getString("T", starTexNames[StellarClass::Spectral_T]);

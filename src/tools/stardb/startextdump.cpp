@@ -143,7 +143,7 @@ void printStellarClass(uint16_t sc, ostream& out)
 }
 
 
-bool DumpOldStarDatabase(istream& in, ostream& out, ostream* hdOut,
+bool DumpOldStarDatabase(istream& in, ostream& out, ofstream& hdOut,
                          bool spherical)
 {
     uint32_t nStarsInFile = readUint(in);
@@ -187,7 +187,7 @@ bool DumpOldStarDatabase(istream& in, ostream& out, ostream* hdOut,
         {
             Eigen::Vector3d pos = astro::equatorialToCelestialCart((double) RA, (double) dec, distance);
             float absMag = (float) (appMag / 256.0 + 5 -
-                                    5 * log10(distance / 3.26));
+                                    5 * log10(distance / LY_PER_PARSEC));
             out << (float) pos.x() << ' ' <<
                    (float) pos.y() << ' ' <<
                    (float) pos.z() << ' ';
@@ -198,15 +198,15 @@ bool DumpOldStarDatabase(istream& in, ostream& out, ostream* hdOut,
         out << '\n';
 
         // Dump HD catalog cross reference
-        if (hdOut != nullptr && HDCatalogNum != ~0)
-            *hdOut << HDCatalogNum << ' ' << catalogNum << '\n';
+        if (hdOut.is_open() && HDCatalogNum != ~0)
+            hdOut << HDCatalogNum << ' ' << catalogNum << '\n';
     }
 
     return true;
 }
 
 
-bool DumpStarDatabase(istream& in, ostream& out, ostream* hdOut)
+bool DumpStarDatabase(istream& in, ostream& out, bool spherical)
 {
     char header[8];
     in.read(header, sizeof header);
@@ -250,9 +250,32 @@ bool DumpStarDatabase(istream& in, ostream& out, ostream* hdOut)
 
         out << catalogNum << ' ';
         out << setprecision(7);
-        out << x << ' ' << y << ' ' << z << ' ';
-        out << setprecision(4);
-        out << ((float) absMag / 256.0f) << ' ';
+        
+        if (spherical)
+        {
+            Eigen::Vector3d eclipticpos = {(double) x, (double) y, (double) z};
+            Eigen::Vector3d pos = astro::eclipticToEquatorial(eclipticpos);
+            double distance = sqrt(x * x + y * y + z * z);
+            // acos outputs angles in interval [0, pi], use negative sign for interval [-pi, 0]
+            double phi = -acos(pos.y() / distance) * 180 / PI;
+            double theta = atan2(pos.z(), -pos.x()) * 180 / PI;
+            // atan2 outputs angles in interval [-pi, pi], so we add 360 to fix this
+            double ra = theta - 180 + 360;
+            double dec = phi + 90;
+            float appMag = float (absMag / 256.0 - 5 + 5 * log10(distance / LY_PER_PARSEC));
+            
+            out << fixed << setprecision(9) << (float) ra << ' ' << (float) dec << ' ';
+            out << setprecision(6) << (float) distance << ' ';
+            out << setprecision(2);
+            out << appMag << ' ';
+        }
+        else
+        {
+            out << x << ' ' << y << ' ' << z << ' ';
+            out << setprecision(4);
+            out << ((float) absMag / 256.0f) << ' ';
+        }
+        
         printStellarClass(stellarClass, out);
         out << '\n';
     }
@@ -339,11 +362,11 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    ofstream* hdOut = nullptr;
-    if (!hdFilename.empty())
+    ofstream hdOut;
+    if (useOldFormat && !hdFilename.empty())
     {
-        hdOut = new ofstream(hdFilename, ios::out);
-        if (!hdOut->good())
+        hdOut.open(hdFilename, ios::out);
+        if (!hdOut.good())
         {
             cerr << "Error opening HD catalog output file " << hdFilename << '\n';
             return 1;
@@ -352,14 +375,16 @@ int main(int argc, char* argv[])
 
     bool success;
     ostream* out = &cout;
+    ofstream fout;
     if (!outputFilename.empty())
     {
-        out = new ofstream(outputFilename, ios::out);
-        if (!out->good())
+        fout.open(outputFilename, ios::out);
+        if (!fout.good())
         {
             cerr << "Error opening output file " << outputFilename << '\n';
             return 1;
         }
+	out = &fout;
     }
 
     if (useOldFormat)
@@ -369,7 +394,7 @@ int main(int argc, char* argv[])
     }
     else
     {
-        success = DumpStarDatabase(stardbFile, *out, hdOut);
+        success = DumpStarDatabase(stardbFile, *out, useSphericalCoords);
     }
 
     return success ? 0 : 1;
