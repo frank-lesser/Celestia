@@ -860,12 +860,18 @@ void Renderer::addAnnotation(vector<Annotation>& annotations,
 {
     GLint view[4] = { 0, 0, windowWidth, windowHeight };
     Vector3f win;
-    if (Project(pos, m_modelMatrix, m_projMatrix, view, win))
+    if (Project(pos, m_MVPMatrix, view, win))
     {
         float depth = pos.x() * m_modelMatrix(2, 0) +
                       pos.y() * m_modelMatrix(2, 1) +
                       pos.z() * m_modelMatrix(2, 2);
         win.z() = -depth;
+        // use round to remove precision error (+/- 0.0000x)
+        // which causes label jittering
+        float x = round(win.x());
+        float y = round(win.y());
+        if (abs(x - win.x()) < 0.001) win.x() = x;
+        if (abs(y - win.y()) < 0.001) win.y() = y;
 
         Annotation a;
         if (!special || markerRep == nullptr)
@@ -1571,6 +1577,7 @@ void Renderer::draw(const Observer& observer,
     // We'll usethem for positioning star and planet labels.
     m_projMatrix = Perspective(fov, getAspectRatio(), NEAR_DIST, FAR_DIST);
     m_modelMatrix = Affine3f(getCameraOrientation()).matrix();
+    m_MVPMatrix = m_projMatrix * m_modelMatrix;
 
     depthSortedAnnotations.clear();
     foregroundAnnotations.clear();
@@ -4784,7 +4791,7 @@ Renderer::renderAnnotationMarker(const Annotation &a,
 
     glVertexAttrib(CelestiaGLProgram::ColorAttributeIndex, a.color);
     glPushMatrix();
-    glTranslatef(a.position.x(), a.position.y(), depth);
+    glTranslatef((int)a.position.x(), (int)a.position.y(), depth);
 
     if (markerRep.symbol() == MarkerRepresentation::Crosshair)
         renderCrosshair(size, realTime, a.color);
@@ -4812,8 +4819,8 @@ Renderer::renderAnnotationLabel(const Annotation &a,
 {
     glVertexAttrib(CelestiaGLProgram::ColorAttributeIndex, a.color);
     glPushMatrix();
-    glTranslatef(a.position.x() + hOffset + PixelOffset,
-                 a.position.y() + vOffset + PixelOffset,
+    glTranslatef((int)a.position.x() + hOffset + PixelOffset,
+                 (int)a.position.y() + vOffset + PixelOffset,
                  depth);
     font[fs]->bind();
     font[fs]->render(a.labelText, 0.0f, 0.0f);
@@ -5011,10 +5018,10 @@ void Renderer::markersToAnnotations(const MarkerList& markers,
     {
         Vector3d offset = marker.position(jd).offsetFromKm(cameraPosition);
 
+        double distance = offset.norm();
         // Only render those markers that lie withing the field of view.
-        if ((offset.dot(viewVector)) > cosViewConeAngle * offset.norm())
+        if ((offset.dot(viewVector)) > cosViewConeAngle * distance)
         {
-            double distance = offset.norm();
             float symbolSize = 0.0f;
             if (marker.sizing() == DistanceBasedSize)
             {
