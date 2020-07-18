@@ -8,24 +8,18 @@
 // of the License, or (at your option) any later version.
 
 #include <cstring>
-#include <cstdarg>
 #include <iostream>
-#include "glsupport.h"
 #include <Eigen/Core>
+#include <celmath/geomutil.h>
+#include <celttf/truetypefont.h>
 #include <celutil/color.h>
 #include <celutil/debug.h>
 #include <celutil/utf8.h>
-#include <celmath/geomutil.h>
-#include "vecgl.h"
 #include "overlay.h"
 #include "rectangle.h"
 #include "render.h"
 #include "texture.h"
-#if NO_TTF
-#include <celtxf/texturefont.h>
-#else
-#include <celttf/truetypefont.h>
-#endif
+#include "vecgl.h"
 
 using namespace std;
 using namespace Eigen;
@@ -40,15 +34,11 @@ Overlay::Overlay(Renderer& r) :
 
 void Overlay::begin()
 {
-    glMatrixMode(GL_PROJECTION);
-    glPushMatrix();
-    glLoadMatrix(Ortho2D(0.0f, (float)windowWidth, 0.0f, (float)windowHeight));
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-    glLoadIdentity();
+    mvp = Ortho2D(0.0f, (float)windowWidth, 0.0f, (float)windowHeight);
+    // ModelView is Identity
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    renderer.enableBlending();
+    renderer.setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     global.reset();
     useTexture = false;
@@ -56,10 +46,6 @@ void Overlay::begin()
 
 void Overlay::end()
 {
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-    glMatrixMode(GL_MODELVIEW);
-    glPopMatrix();
 }
 
 
@@ -88,6 +74,7 @@ void Overlay::beginText()
     if (font != nullptr)
     {
         font->bind();
+        font->setMVPMatrix(mvp);
         useTexture = true;
         fontChanged = false;
     }
@@ -111,6 +98,7 @@ void Overlay::print(wchar_t c)
         if (!useTexture || fontChanged)
         {
             font->bind();
+            font->setMVPMatrix(mvp);
             useTexture = true;
             fontChanged = false;
         }
@@ -141,6 +129,7 @@ void Overlay::print(char c)
         if (!useTexture || fontChanged)
         {
             font->bind();
+            font->setMVPMatrix(mvp);
             useTexture = true;
             fontChanged = false;
         }
@@ -185,7 +174,7 @@ void Overlay::drawRectangle(const Rect& r)
         useTexture = false;
     }
 
-    renderer.drawRectangle(r);
+    renderer.drawRectangle(r, mvp);
 }
 
 void Overlay::setColor(float r, float g, float b, float a)
@@ -231,7 +220,7 @@ void Overlay::restorePos()
 OverlayStreamBuf::OverlayStreamBuf()
 {
     setbuf(nullptr, 0);
-};
+}
 
 
 void OverlayStreamBuf::setOverlay(Overlay* o)

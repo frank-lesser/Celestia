@@ -12,8 +12,9 @@
 
 #include <string>
 #include <iosfwd>
-#include <vector>
 #include <celutil/color.h>
+#include <vector>
+#include <Eigen/Core>
 
 class Console;
 class TextureFont;
@@ -41,11 +42,16 @@ class ConsoleStreamBuf : public std::streambuf
     unsigned int decodeShift{ 0 };
 };
 
-
+class Renderer;
 class Console : public std::ostream
 {
  public:
-    Console(int _nRows, int _nColumns);
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    static constexpr const int PageRows = 10;
+
+
+    Console(Renderer& renderer, int _nRows, int _nColumns);
     ~Console();
 
     bool setRowCount(int _nRows);
@@ -75,6 +81,8 @@ class Console : public std::ostream
     int getHeight() const;
     int getWidth() const;
 
+    void scroll(int lines);
+
  private:
     void savePos();
     void restorePos();
@@ -92,6 +100,7 @@ class Console : public std::ostream
     int xscale{ 1 };
     int yscale{ 1 };
     TextureFont* font{ nullptr };
+    Renderer& renderer;
 
     ConsoleStreamBuf sbuf;
 
@@ -108,6 +117,7 @@ class Console : public std::ostream
     };
     CursorPosition global { 0.0f, 0.0f };
     std::vector<CursorPosition> posStack;
+    Eigen::Matrix4f mpv;
 };
 
 #endif // _CELENGINE_CONSOLE_H_

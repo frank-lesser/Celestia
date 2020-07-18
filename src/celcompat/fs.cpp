@@ -206,7 +206,7 @@ directory_iterator::directory_iterator(const path& p) :
 directory_iterator::directory_iterator(const path& p, std::error_code& ec) :
     m_path(p),
     m_ec(ec),
-    m_search(std::make_shared<SearchImpl>(p))
+    m_search(new SearchImpl(p))
 {
     if (!m_search->advance(m_entry))
         reset();
@@ -239,7 +239,7 @@ struct recursive_directory_iterator::DirStack
 recursive_directory_iterator::recursive_directory_iterator(const path& p)
 {
     if (m_dirs == nullptr)
-        m_dirs = std::make_shared<DirStack>();
+        m_dirs = std::shared_ptr<DirStack>(new DirStack);
 
     m_iter = directory_iterator(p);
 }
@@ -260,7 +260,7 @@ recursive_directory_iterator& recursive_directory_iterator::operator++()
         return *this;
 
     auto& p = m_iter->path();
-    if (m_pending && is_directory(p))
+    if (m_pending && (p.empty() || is_directory(p)))
     {
         m_dirs->m_dirIters.emplace_back(m_iter);
         m_iter = directory_iterator(p);
@@ -293,7 +293,10 @@ void recursive_directory_iterator::pop()
 
 void recursive_directory_iterator::pop(std::error_code& ec)
 {
-    m_dirs->m_dirIters.pop_back();
+    if (m_dirs->m_dirIters.empty())
+        ec = std::error_code(errno, std::system_category()); // filesystem_error
+    else
+        m_dirs->m_dirIters.pop_back();
 }
 
 void recursive_directory_iterator::reset()
@@ -398,7 +401,12 @@ bool is_directory(const path& p, std::error_code& ec) noexcept
     return (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
 #else
     struct stat buf;
-    return (stat(p.c_str(), &buf) == 0) && S_ISDIR(buf.st_mode);
+    if (stat(p.c_str(), &buf) != 0)
+    {
+        ec = std::error_code(errno, std::system_category());
+        return false;
+    }
+    return S_ISDIR(buf.st_mode);
 #endif
 }
 

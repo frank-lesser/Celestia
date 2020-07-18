@@ -65,7 +65,6 @@ std::ofstream hdrlog;
 #include "boundariesrenderer.h"
 #include "rendcontext.h"
 #include "vertexobject.h"
-#include <celcompat/memory.h>
 #include <celengine/observer.h>
 #include <celmath/frustum.h>
 #include <celmath/distance.h>
@@ -75,11 +74,7 @@ std::ofstream hdrlog;
 #include <celutil/utf8.h>
 #include <celutil/util.h>
 #include <celutil/timer.h>
-#if NO_TTF
-#include <celtxf/texturefont.h>
-#else
 #include <celttf/truetypefont.h>
-#endif
 #include "glsupport.h"
 #include <algorithm>
 #include <cstring>
@@ -249,7 +244,9 @@ Renderer::Renderer() :
     screenDpi(96),
     corrFac(1.12f),
     faintestAutoMag45deg(8.0f), //def. 7.0f
+#ifndef GL_ES
     renderMode(GL_FILL),
+#endif
     labelMode(LocationLabels), //def. NoLabels
     renderFlags(DefaultRenderFlags),
     orbitMask(Body::Planet | Body::Moon | Body::Stellar),
@@ -636,8 +633,6 @@ bool Renderer::init(
     delete testTex;
 #endif
 
-    glLoadIdentity();
-
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
 
@@ -729,10 +724,22 @@ void Renderer::setFont(FontStyle fs, TextureFont* txf)
     markSettingsChanged();
 }
 
-void Renderer::setRenderMode(int _renderMode)
+void Renderer::setRenderMode(RenderMode _renderMode)
 {
-    renderMode = _renderMode;
+#ifndef GL_ES
+    switch(_renderMode)
+    {
+    case RenderMode::Fill:
+        renderMode = GL_FILL;
+        break;
+    case RenderMode::Line:
+        renderMode = GL_LINE;
+        break;
+    default:
+        return;
+    }
     markSettingsChanged();
+#endif
 }
 
 uint64_t Renderer::getRenderFlags() const
@@ -985,30 +992,34 @@ void Renderer::addObjectAnnotation(const MarkerRepresentation* markerRep,
 }
 
 void
-Renderer::enableSmoothLines() const
+Renderer::enableSmoothLines()
 {
     if ((renderFlags & ShowSmoothLines) == 0)
         return;
 
-    // glEnable(GL_BLEND);
+    // enableBlending();
 #ifdef USE_HDR
-    glBlendFunc(GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA);
+    setBlendingFactors(GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA);
 #else
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 #endif
+#ifndef GL_ES
     glEnable(GL_LINE_SMOOTH);
+#endif
     glLineWidth(1.5f);
 }
 
 void
-Renderer::disableSmoothLines() const
+Renderer::disableSmoothLines()
 {
     if ((renderFlags & Renderer::ShowSmoothLines) == 0)
         return;
 
-    // glDisable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    // disableBlending();
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
+#ifndef GL_ES
     glDisable(GL_LINE_SMOOTH);
+#endif
     glLineWidth(1.0f);
 }
 
@@ -1075,7 +1086,8 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
                            const Quaterniond& cameraOrientation,
                            const Frustum& frustum,
                            float nearDist,
-                           float farDist)
+                           float farDist,
+                           const Matrices& m)
 {
     ShaderProperties shadprop;
     shadprop.texUsage = ShaderProperties::VertexColors;
@@ -1258,9 +1270,6 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
         modelview = cameraOrientation * Translation3d(orbitPath.origin) * orientation.conjugate();
     }
 
-    glPushMatrix();
-    glLoadIdentity();
-
     bool highlight;
     if (body != nullptr)
         highlight = highlightObject.body() == body;
@@ -1282,6 +1291,7 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
     }
 
     prog->use();
+    prog->MVPMatrix = *m.projection; // Skip MV as it's Identity
     if (orbit->isPeriodic())
     {
         double period = orbit->getPeriod();
@@ -1334,7 +1344,6 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
 #endif
 
     glUseProgram(0);
-    glPopMatrix();
 }
 
 
@@ -1438,7 +1447,8 @@ setupSecondaryLightSources(vector<SecondaryIlluminator>& secondaryIlluminators,
 void Renderer::renderItem(const RenderListEntry& rle,
                           const Observer& observer,
                           float nearPlaneDistance,
-                          float farPlaneDistance)
+                          float farPlaneDistance,
+                          const Matrices& m)
 {
     switch (rle.renderableType)
     {
@@ -1448,7 +1458,8 @@ void Renderer::renderItem(const RenderListEntry& rle,
                    rle.distance,
                    rle.appMag,
                    observer.getTime(),
-                   nearPlaneDistance, farPlaneDistance);
+                   nearPlaneDistance, farPlaneDistance,
+                   m);
         break;
 
     case RenderListEntry::RenderableBody:
@@ -1457,14 +1468,16 @@ void Renderer::renderItem(const RenderListEntry& rle,
                      rle.distance,
                      rle.appMag,
                      observer,
-                     nearPlaneDistance, farPlaneDistance);
+                     nearPlaneDistance, farPlaneDistance,
+                     m);
         break;
 
     case RenderListEntry::RenderableCometTail:
         renderCometTail(*rle.body,
                         rle.position,
                         observer,
-                        rle.discSizeInPixels);
+                        rle.discSizeInPixels,
+                        m);
         break;
 
     case RenderListEntry::RenderableReferenceMark:
@@ -1472,7 +1485,8 @@ void Renderer::renderItem(const RenderListEntry& rle,
                             rle.position,
                             rle.distance,
                             observer.getTime(),
-                            nearPlaneDistance);
+                            nearPlaneDistance,
+                            m);
         break;
 
     default:
@@ -1495,7 +1509,7 @@ void Renderer::render(const Observer& observer,
     //------------- Post processing from here ------------//
     glPushAttrib(GL_ENABLE_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_TEXTURE_2D);
-    glDisable(GL_BLEND);
+    disableBlending();
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
 
@@ -1515,8 +1529,8 @@ void Renderer::render(const Observer& observer,
 
     drawSceneTexture();
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE);
+    enableBlending();
+    setBlendingFactors(GL_ONE, GL_ONE);
 
 #ifdef HDR_COMPRESS
     // Assume luminance 1.0 mapped to 128 previously
@@ -1670,19 +1684,13 @@ void Renderer::draw(const Observer& observer,
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 #endif
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glDepthMask(GL_FALSE);
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadMatrix(m_projMatrix);
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-    glLoadMatrix(m_modelMatrix);
+    disableDepthMask();
 
     // Render sky grids first--these will always be in the background
     enableSmoothLines();
     renderSkyGrids(observer);
     disableSmoothLines();
-    glEnable(GL_BLEND);
+    enableBlending();
 
     // Render deep sky objects
     if ((renderFlags & ShowDeepSpaceObjects) != 0 && universe.getDSOCatalog() != nullptr)
@@ -1694,7 +1702,7 @@ void Renderer::draw(const Observer& observer,
 #ifdef USE_HDR
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 #endif
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
 
     if ((renderFlags & ShowStars) != 0 && universe.getStarCatalog() != nullptr)
     {
@@ -1706,15 +1714,16 @@ void Renderer::draw(const Observer& observer,
 #endif
 
     // Translate the camera before rendering the asterisms and boundaries
-    glPushMatrix();
     // Set up the camera for star rendering; the units of this phase
     // are light years.
-    Vector3f observerPosLY = observer.getPosition().offsetFromLy(Vector3f::Zero());
-    glTranslatef(-observerPosLY.x(), -observerPosLY.y(), -observerPosLY.z());
+    Vector3f observerPosLY = -observer.getPosition().offsetFromLy(Vector3f::Zero());
+    Matrix4f asterismMVP = getProjectionMatrix() *
+                           getModelViewMatrix()  *
+                           vecgl::translate(observerPosLY);
 
     float dist = observerPosLY.norm() * 1.6e4f;
-    renderAsterisms(universe, dist);
-    renderBoundaries(universe, dist);
+    renderAsterisms(universe, dist, asterismMVP);
+    renderBoundaries(universe, dist, asterismMVP);
 
     // Render star and deep sky object labels
     renderBackgroundAnnotations(FontNormal);
@@ -1725,9 +1734,6 @@ void Renderer::draw(const Observer& observer,
         labelConstellations(*universe.getAsterisms(), observer);
         renderBackgroundAnnotations(FontLarge);
     }
-
-    // Pop observer translation
-    glPopMatrix();
 
     if ((renderFlags & ShowMarkers) != 0)
     {
@@ -1757,38 +1763,35 @@ void Renderer::draw(const Observer& observer,
     adjustEclipsedStarExposure(now);
 #endif
 
+#ifndef GL_ES
     glPolygonMode(GL_FRONT_AND_BACK, (GLenum) renderMode);
+#endif
 
     int nIntervals = buildDepthPartitions();
     renderSolarSystemObjects(observer, nIntervals, now);
 
     renderForegroundAnnotations(FontNormal);
 
-    glMatrixMode(GL_PROJECTION);
-    glLoadMatrix(m_projMatrix);
-    glMatrixMode(GL_MODELVIEW);
-
     if (!selectionVisible && (renderFlags & ShowMarkers))
     {
         renderSelectionPointer(observer, now, xfrustum, sel);
     }
 
-    // Pop camera orientation matrix
-    glMatrixMode(GL_MODELVIEW);
-    glPopMatrix();
-
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+#ifndef GL_ES
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+#endif
 
-    glDisable(GL_BLEND);
-    glDepthMask(GL_TRUE);
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    disableBlending();
+    enableDepthMask();
 }
 
 void renderPoint(const Renderer &renderer,
                  const Vector3f &position,
                  const Color &color,
                  float size,
-                 bool useSprite)
+                 bool useSprite,
+                 const Matrices &m)
 {
     auto *prog = renderer.getShaderManager().getShader("star");
     if (prog == nullptr)
@@ -1796,18 +1799,29 @@ void renderPoint(const Renderer &renderer,
 
     prog->use();
     prog->samplerParam("starTex") = 0;
+    prog->mat4Param("MVPMatrix") = (*m.projection) * (*m.modelview);
 
+#ifndef GL_ES
     glEnable(GL_POINT_SPRITE);
-    glVertexAttrib3fv(CelestiaGLProgram::VertexCoordAttributeIndex, position.data());
+    glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
+#endif
+    // Workaround for macOS to pass a single vertex coord
+    glEnableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
+    glVertexAttribPointer(CelestiaGLProgram::VertexCoordAttributeIndex,
+                          3, GL_FLOAT, GL_FALSE, sizeof(position), position.data());
+
     glVertexAttrib(CelestiaGLProgram::ColorAttributeIndex, color);
     glVertexAttrib1f(CelestiaGLProgram::PointSizeAttributeIndex, useSprite ? size : 1.0f);
-    glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
 
     glDrawArrays(GL_POINTS, 0, 1);
 
+    glDisableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
+
+#ifndef GL_ES
     if (useSprite)
         glDisable(GL_VERTEX_PROGRAM_POINT_SIZE);
     glDisable(GL_POINT_SPRITE);
+#endif
     glUseProgram(0);
 }
 
@@ -1818,13 +1832,14 @@ void renderPoint(const Renderer &renderer,
 // object to smooth things out, making it dimmer as the disc size exceeds the
 // max disc size.
 void Renderer::renderObjectAsPoint(const Vector3f& position,
-                                   float radius,
+                                   float /*radius*/,
                                    float appMag,
                                    float _faintestMag,
                                    float discSizeInPixels,
-                                   Color color,
+                                   const Color &color,
                                    bool useHalos,
-                                   bool emissive)
+                                   bool emissive,
+                                   const Matrices &m)
 {
     const float maxSize = MaxScaledDiscStarSize;
     float maxDiscSize = (starStyle == ScaledDiscStars) ? maxSize : 1.0f;
@@ -1836,7 +1851,7 @@ void Renderer::renderObjectAsPoint(const Vector3f& position,
     {
         float alpha = 1.0f;
         float fade = 1.0f;
-        float size = BaseStarDiscSize;
+        float size = BaseStarDiscSize * screenDpi / 96;
 #ifdef USE_HDR
         float fieldCorr = 2.0f * FOV/(fov + FOV);
         float satPoint = saturationMagNight * (1.0f + fieldCorr * fieldCorr);
@@ -1894,11 +1909,11 @@ void Renderer::renderObjectAsPoint(const Vector3f& position,
             glareAlpha *= fade;
         }
 
-        glEnable(GL_DEPTH_TEST);
+        enableDepthTest();
         bool useSprites = starStyle != PointStars;
         if (useSprites)
             gaussianDiscTex->bind();
-        renderPoint(*this, position, {color, alpha}, pointSize, useSprites);
+        renderPoint(*this, position, {color, alpha}, pointSize, useSprites, m);
 
         // If the object is brighter than magnitude 1, add a halo around it to
         // make it appear more brilliant.  This is a hack to compensate for the
@@ -1909,10 +1924,10 @@ void Renderer::renderObjectAsPoint(const Vector3f& position,
         if (useHalos && glareAlpha > 0.0f)
         {
             gaussianGlareTex->bind();
-            renderPoint(*this, position, {color, glareAlpha}, glareSize, true);
+            renderPoint(*this, position, {color, glareAlpha}, glareSize, true, m);
         }
 
-        glDisable(GL_DEPTH_TEST);
+        disableDepthTest();
     }
 }
 
@@ -1939,7 +1954,8 @@ void Renderer::renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
                                          const Vector3f& sunDirection,
                                          const LightingState& ls,
                                          float pixSize,
-                                         bool lit)
+                                         bool lit,
+                                         const Matrices &m)
 {
     if (atmosphere.height == 0.0f)
         return;
@@ -1951,7 +1967,7 @@ void Renderer::renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
     if (prog == nullptr)
         return;
 
-    glDepthMask(GL_FALSE);
+    disableDepthMask();
 
     // Gradually fade in the atmosphere if it's thickness on screen is just
     // over one pixel.
@@ -2190,6 +2206,7 @@ void Renderer::renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
                           4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(SkyVertex),
                           static_cast<void*>(&skyVertices[0].color));
     prog->use();
+    prog->MVPMatrix = (*m.projection) * (*m.modelview);
     for (int i = 0; i < nRings; i++)
     {
         glDrawElements(GL_TRIANGLE_STRIP,
@@ -2206,6 +2223,7 @@ void Renderer::renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
 
 static void renderSphereUnlit(const RenderInfo& ri,
                               const Frustum& frustum,
+                              const Matrices &m,
                               const Renderer *r)
 {
     Texture* textures[MAX_SPHERE_MESH_TEXTURES];
@@ -2236,6 +2254,7 @@ static void renderSphereUnlit(const RenderInfo& ri,
         return;
     prog->use();
 
+    prog->MVPMatrix = (*m.projection) * (*m.modelview);
     prog->textureOffset = 0.0f;
     prog->ambientColor = ri.color.toVector3();
     prog->opacity = 1.0f;
@@ -2252,6 +2271,7 @@ static void renderCloudsUnlit(const RenderInfo& ri,
                               const Frustum& frustum,
                               Texture *cloudTex,
                               float cloudTexOffset,
+                              const Matrices &m,
                               const Renderer *r)
 {
     ShaderProperties shadprop;
@@ -2263,6 +2283,7 @@ static void renderCloudsUnlit(const RenderInfo& ri,
     if (prog == nullptr)
         return;
     prog->use();
+    prog->MVPMatrix = (*m.projection) * (*m.modelview);
     prog->textureOffset = cloudTexOffset;
 
     g_lodSphere->render(frustum, ri.pixWidth, &cloudTex, 1);
@@ -2601,7 +2622,8 @@ void Renderer::renderObject(const Vector3f& pos,
                             float nearPlaneDistance,
                             float farPlaneDistance,
                             RenderProperties& obj,
-                            const LightingState& ls)
+                            const LightingState& ls,
+                            const Matrices &m)
 {
     RenderInfo ri;
 
@@ -2619,10 +2641,10 @@ void Renderer::renderObject(const Vector3f& pos,
     }
 
     // Enable depth buffering
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
+    enableDepthTest();
+    enableDepthMask();
 
-    glDisable(GL_BLEND);
+    disableBlending();
 
     // Get the object's geometry; nullptr indicates that object is an
     // ellipsoid.
@@ -2647,11 +2669,6 @@ void Renderer::renderObject(const Vector3f& pos,
     if ((obj.surface->appearanceFlags & Surface::ApplyOverlay) != 0)
         ri.overlayTex = obj.surface->overlayTexture.find(textureResolution);
 
-    // Apply the modelview transform for the object
-    glPushMatrix();
-    glTranslate(pos);
-    glRotate(obj.orientation.conjugate());
-
     // Scaling will be nonuniform for nonspherical planets. As long as the
     // deviation from spherical isn't too large, the nonuniform scale factor
     // shouldn't mess up the lighting calculations enough to be noticeable
@@ -2672,7 +2689,11 @@ void Renderer::renderObject(const Vector3f& pos,
         scaleFactors = Vector3f::Constant(geometryScale);
         ri.pointScale = 2.0f * geometryScale / pixelSize;
     }
-    glScale(scaleFactors);
+    // Apply the modelview transform for the object
+    Affine3f transform = Translation3f(pos) * obj.orientation.conjugate() * Scaling(scaleFactors);
+    Matrix4f mv = (*m.modelview) * transform.matrix();
+
+    Matrices mvp = { m.projection, &mv };
 
     Matrix3f planetRotation = obj.orientation.toRotationMatrix();
 
@@ -2786,11 +2807,13 @@ void Renderer::renderObject(const Vector3f& pos,
                                  scaleFactors,
                                  textureResolution,
                                  renderFlags,
-                                 obj.orientation, viewFrustum, this);
+                                 obj.orientation,
+                                 viewFrustum,
+                                 mvp, this);
         }
         else
         {
-            renderSphereUnlit(ri, viewFrustum, this);
+            renderSphereUnlit(ri, viewFrustum, mvp, this);
         }
     }
     else
@@ -2810,7 +2833,7 @@ void Renderer::renderObject(const Vector3f& pos,
                                     renderFlags,
                                     obj.orientation,
                                     astro::daysToSecs(now - astro::J2000),
-                                    this);
+                                    mvp, this);
             }
             else
             {
@@ -2821,7 +2844,7 @@ void Renderer::renderObject(const Vector3f& pos,
                                           renderFlags,
                                           obj.orientation,
                                           astro::daysToSecs(now - astro::J2000),
-                                          this);
+                                          mvp, this);
             }
 
             for (unsigned int i = 0; i < 8;/*context->getMaxTextures();*/ i++)
@@ -2845,7 +2868,7 @@ void Renderer::renderObject(const Vector3f& pos,
                              textureResolution,
                              (renderFlags & ShowRingShadows) != 0 && lit,
                              segmentSizeInPixels,
-                             this);
+                             mvp, this);
         }
     }
 
@@ -2881,16 +2904,14 @@ void Renderer::renderObject(const Vector3f& pos,
                                       radius * atmScale,
                                       obj.orientation,
                                       viewFrustum,
-                                      this);
+                                      mvp, this);
             }
             else
             {
-                glPushMatrix();
-                glLoadIdentity();
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-
-                glRotate(getCameraOrientation());
+                Matrix4f mv = vecgl::rotate(getCameraOrientation());
+                Matrices mvp = { m.projection, &mv };
+                enableBlending();
+                setBlendingFactors(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
                 renderEllipsoidAtmosphere(*atmosphere,
                                           pos,
@@ -2899,28 +2920,26 @@ void Renderer::renderObject(const Vector3f& pos,
                                           ri.sunDir_eye,
                                           ls,
                                           thicknessInPixels,
-                                          lit);
-                glPopMatrix();
+                                          lit, mvp);
             }
         }
 
         // If there's a cloud layer, we'll render it now.
         if (cloudTex != nullptr)
         {
-            glPushMatrix();
-
             float cloudScale = 1.0f + atmosphere->cloudHeight / radius;
-            glScalef(cloudScale, cloudScale, cloudScale);
+            Matrix4f cmv = vecgl::scale(mv, cloudScale);
+            Matrices mvp = { m.projection, &cmv };
 
             // If we're beneath the cloud level, render the interior of
             // the cloud sphere.
             if (distance - radius < atmosphere->cloudHeight)
                 glFrontFace(GL_CW);
 
-            glDepthMask(GL_FALSE);
+            disableDepthMask();
             cloudTex->bind();
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            enableBlending();
+            setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
             // Cloud layers can be trouble for the depth buffer, since they tend
             // to be very close to the surface of a planet relative to the radius
@@ -2944,17 +2963,16 @@ void Renderer::renderObject(const Vector3f& pos,
                                   renderFlags,
                                   obj.orientation,
                                   viewFrustum,
-                                  this);
+                                  mvp, this);
             }
             else
             {
-                renderCloudsUnlit(ri, viewFrustum, cloudTex, cloudTexOffset, this);
+                renderCloudsUnlit(ri,viewFrustum, cloudTex, cloudTexOffset, mvp, this);
             }
 
             glDisable(GL_POLYGON_OFFSET_FILL);
-            glDepthMask(GL_TRUE);
+            enableDepthMask();
             glFrontFace(GL_CCW);
-            glPopMatrix();
         }
     }
 
@@ -2969,20 +2987,19 @@ void Renderer::renderObject(const Vector3f& pos,
 
         if (distance > obj.rings->innerRadius)
         {
-            glDepthMask(GL_FALSE);
+            disableDepthMask();
             renderRings_GLSL(*obj.rings, ri, ls,
                              radius, 1.0f - obj.semiAxes.y(),
                              textureResolution,
                              (renderFlags & ShowRingShadows) != 0 && lit,
                              segmentSizeInPixels,
-                             this);
+                             mvp, this);
         }
     }
 
-    glPopMatrix();
-    glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
-    glEnable(GL_BLEND);
+    disableDepthTest();
+    disableDepthMask();
+    enableBlending();
 }
 
 
@@ -3139,14 +3156,16 @@ void Renderer::renderPlanet(Body& body,
                             float appMag,
                             const Observer& observer,
                             float nearPlaneDistance,
-                            float farPlaneDistance)
+                            float farPlaneDistance,
+                            const Matrices &m)
 {
     double now = observer.getTime();
     float altitude = distance - body.getRadius();
     float discSizeInPixels = body.getRadius() /
         (max(nearPlaneDistance, altitude) * pixelSize);
 
-    if (discSizeInPixels > 1 && body.hasVisibleGeometry())
+    float maxDiscSize = (starStyle == ScaledDiscStars) ? MaxScaledDiscStarSize : 1.0f;
+    if (discSizeInPixels >= maxDiscSize && body.hasVisibleGeometry())
     {
         RenderProperties rp;
 
@@ -3371,7 +3390,7 @@ void Renderer::renderPlanet(Body& body,
 
         renderObject(pos, distance, now,
                      nearPlaneDistance, farPlaneDistance,
-                     rp, lights);
+                     rp, lights, m);
 
         if (body.getLocations() != nullptr && (labelMode & LocationLabels) != 0)
         {
@@ -3382,21 +3401,21 @@ void Renderer::renderPlanet(Body& body,
             cityRep        = MarkerRepresentation(MarkerRepresentation::X,        3.0f, LocationLabelColor);
             genericLocationRep = MarkerRepresentation(MarkerRepresentation::Square, 8.0f, LocationLabelColor);
 
-            glEnable(GL_DEPTH_TEST);
-            glDepthMask(GL_FALSE);
-            glDisable(GL_BLEND);
+            enableDepthTest();
+            disableDepthMask();
+            disableBlending();
 
             // We need a double precision body-relative position of the
             // observer, otherwise location labels will tend to jitter.
             Vector3d posd = body.getPosition(observer.getTime()).offsetFromKm(observer.getPosition());
             locationsToAnnotations(body, posd, q);
 
-            glDisable(GL_DEPTH_TEST);
+            disableDepthTest();
         }
     }
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    enableBlending();
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
 #ifdef USE_HDR
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 #endif
@@ -3409,7 +3428,7 @@ void Renderer::renderPlanet(Body& body,
                             faintestMag,
                             discSizeInPixels,
                             body.getSurface().color,
-                            false, false);
+                            false, false, m);
     }
 #ifdef USE_HDR
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -3423,7 +3442,8 @@ void Renderer::renderStar(const Star& star,
                           float appMag,
                           double now,
                           float nearPlaneDistance,
-                          float farPlaneDistance)
+                          float farPlaneDistance,
+                          const Matrices &m)
 {
     if (!star.getVisibility())
         return;
@@ -3483,10 +3503,10 @@ void Renderer::renderStar(const Star& star,
 
         renderObject(pos, distance, now,
                      nearPlaneDistance, farPlaneDistance,
-                     rp, LightingState());
+                     rp, LightingState(), m);
     }
 
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
 #ifdef USE_HDR
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 #endif
@@ -3497,7 +3517,8 @@ void Renderer::renderStar(const Star& star,
                         faintestMag,
                         discSizeInPixels,
                         color,
-                        true, true);
+                        true, true,
+                        m);
 #ifdef USE_HDR
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 #endif
@@ -3530,7 +3551,8 @@ static float cometDustTailLength(float distanceToSun,
 void Renderer::renderCometTail(const Body& body,
                                const Vector3f& pos,
                                const Observer& observer,
-                               float discSizeInPixels)
+                               float discSizeInPixels,
+                               const Matrices &m)
 {
     auto prog = shaderManager->getShader("comet");
     if (prog == nullptr)
@@ -3659,14 +3681,14 @@ void Renderer::renderCometTail(const Body& body,
         }
     }
 
-    glPushMatrix();
-    glTranslate(pos);
-    glDepthMask(GL_FALSE);
+    disableDepthMask();
     glDisable(GL_CULL_FACE);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    enableBlending();
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
 
     prog->use();
+    prog->mat4Param("MVPMatrix") = (*m.projection) * (*m.modelview) * vecgl::translate(pos);
+
     glEnableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
     glEnableVertexAttribArray(CelestiaGLProgram::NormalAttributeIndex);
     auto brightness = prog->attribIndex("brightness");
@@ -3714,10 +3736,8 @@ void Renderer::renderCometTail(const Body& body,
     glVertexPointer(3, GL_FLOAT, 0, cometPoints);
     glDrawArrays(GL_LINE_STRIP, 0, nTailPoints);
     glDisableClientState(GL_VERTEX_ARRAY);
-    glEnable(GL_BLEND);
+    enableBlending();
 #endif
-
-    glPopMatrix();
 }
 
 
@@ -3726,7 +3746,8 @@ void Renderer::renderReferenceMark(const ReferenceMark& refMark,
                                    const Vector3f& pos,
                                    float distance,
                                    double now,
-                                   float nearPlaneDistance)
+                                   float nearPlaneDistance,
+                                   const Matrices &m)
 {
     float altitude = distance - refMark.boundingSphereRadius();
     float discSizeInPixels = refMark.boundingSphereRadius() /
@@ -3735,22 +3756,16 @@ void Renderer::renderReferenceMark(const ReferenceMark& refMark,
     if (discSizeInPixels <= 1)
         return;
 
-    // Apply the modelview transform for the object
-    glPushMatrix();
-    glTranslate(pos);
+    refMark.render(this, pos, discSizeInPixels, now, m);
 
-    refMark.render(this, pos, discSizeInPixels, now);
-
-    glPopMatrix();
-
-    glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    disableDepthTest();
+    disableDepthMask();
+    enableBlending();
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
 }
 
 
-void Renderer::renderAsterisms(const Universe& universe, float dist)
+void Renderer::renderAsterisms(const Universe& universe, float dist, const Matrix4f& mvp)
 {
     auto *asterisms = universe.getAsterisms();
 
@@ -3775,12 +3790,12 @@ void Renderer::renderAsterisms(const Universe& universe, float dist)
     }
 
     enableSmoothLines();
-    m_asterismRenderer->render(*this, Color(ConstellationColor, opacity));
+    m_asterismRenderer->render(*this, Color(ConstellationColor, opacity), mvp);
     disableSmoothLines();
 }
 
 
-void Renderer::renderBoundaries(const Universe& universe, float dist)
+void Renderer::renderBoundaries(const Universe& universe, float dist, const Matrix4f& mvp)
 {
     auto boundaries = universe.getBoundaries();
     if ((renderFlags & ShowBoundaries) == 0 || boundaries == nullptr)
@@ -3806,7 +3821,7 @@ void Renderer::renderBoundaries(const Universe& universe, float dist)
     }
 
     enableSmoothLines();
-    m_boundariesRenderer->render(*this, Color(BoundaryColor, opacity));
+    m_boundariesRenderer->render(*this, Color(BoundaryColor, opacity), mvp);
     disableSmoothLines();
 }
 
@@ -4436,10 +4451,12 @@ void Renderer::renderPointStars(const StarDatabase& starDB,
                                 float faintestMagNight,
                                 const Observer& observer)
 {
+#ifndef GL_ES
     // Disable multisample rendering when drawing point stars
     bool toggleAA = (starStyle == Renderer::PointStars && glIsEnabled(GL_MULTISAMPLE));
     if (toggleAA)
         glDisable(GL_MULTISAMPLE);
+#endif
 
     Vector3d obsPos = observer.getPosition().toLy();
 
@@ -4485,7 +4502,7 @@ void Renderer::renderPointStars(const StarDatabase& starDB,
     float effDistanceToScreen = mmToInches((float) REF_DISTANCE_TO_SCREEN) * pixelSize * getScreenDpi();
     starRenderer.labelThresholdMag = 1.2f * max(1.0f, (faintestMag - 4.0f) * (1.0f - 0.5f * (float) log10(effDistanceToScreen)));
 
-    starRenderer.size = BaseStarDiscSize;
+    starRenderer.size = BaseStarDiscSize * screenDpi / 96;
     if (starStyle == ScaledDiscStars)
     {
         starRenderer.useScaledDiscs = true;
@@ -4531,8 +4548,10 @@ void Renderer::renderPointStars(const StarDatabase& starDB,
     starRenderer.starVertexBuffer->finish();
     starRenderer.glareVertexBuffer->finish();
 
+#ifndef GL_ES
     if (toggleAA)
         glEnable(GL_MULTISAMPLE);
+#endif
 }
 
 void Renderer::renderDeepSkyObjects(const Universe& universe,
@@ -4590,7 +4609,7 @@ void Renderer::renderDeepSkyObjects(const Universe& universe,
     // (mostly to make graticules look good.)
     enableSmoothLines();
 
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
 
 #ifdef OCTREE_DEBUG
     m_dsoProcStats.objects = 0;
@@ -4765,7 +4784,9 @@ void Renderer::renderParticles(const vector<Particle>& particles)
         return;
     prog->use();
 
+#ifndef GL_ES
     glEnable(GL_POINT_SPRITE);
+#endif
     glEnableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
     glVertexAttribPointer(CelestiaGLProgram::VertexCoordAttributeIndex,
                           3, GL_FLOAT, GL_FALSE, sizeof(Particle), &particles[0].center);
@@ -4778,36 +4799,40 @@ void Renderer::renderParticles(const vector<Particle>& particles)
     glDisableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
     glDisableVertexAttribArray(CelestiaGLProgram::PointSizeAttributeIndex);
     glUseProgram(0);
+#ifndef GL_ES
     glDisable(GL_POINT_SPRITE);
+#endif
 }
 
 void
 Renderer::renderAnnotationMarker(const Annotation &a,
                                  FontStyle fs,
-                                 float depth)
+                                 float depth,
+                                 const Matrices &m)
 {
     const MarkerRepresentation& markerRep = *a.markerRep;
     float size = a.size > 0.0f ? a.size : markerRep.size();
 
     glVertexAttrib(CelestiaGLProgram::ColorAttributeIndex, a.color);
-    glPushMatrix();
-    glTranslatef((int)a.position.x(), (int)a.position.y(), depth);
+
+    Matrix4f mv = vecgl::translate(*m.modelview, (float)(int)a.position.x(), (float)(int)a.position.y(), depth);
+    Matrices mm = { m.projection, &mv };
 
     if (markerRep.symbol() == MarkerRepresentation::Crosshair)
-        renderCrosshair(size, realTime, a.color);
+        renderCrosshair(size, realTime, a.color, mm);
     else
-        markerRep.render(*this, size);
+        markerRep.render(*this, size, mm);
 
     if (!markerRep.label().empty())
     {
         int labelOffset = (int)markerRep.size() / 2;
-        glTranslatef(labelOffset + PixelOffset,
-                     -labelOffset - font[fs]->getHeight() + PixelOffset, 0.0f);
+        float x = labelOffset + PixelOffset;
+        float y = -labelOffset - font[fs]->getHeight() + PixelOffset;
         font[fs]->bind();
-        font[fs]->render(markerRep.label(), 0.0f, 0.0f);
+        font[fs]->setMVPMatrix((*m.projection) * mv);
+        font[fs]->render(markerRep.label(), x, y);
         font[fs]->flush();
     }
-    glPopMatrix();
 }
 
 void
@@ -4815,21 +4840,25 @@ Renderer::renderAnnotationLabel(const Annotation &a,
                                 FontStyle fs,
                                 int hOffset,
                                 int vOffset,
-                                float depth)
+                                float depth,
+                                const Matrices &m)
 {
     glVertexAttrib(CelestiaGLProgram::ColorAttributeIndex, a.color);
-    glPushMatrix();
-    glTranslatef((int)a.position.x() + hOffset + PixelOffset,
-                 (int)a.position.y() + vOffset + PixelOffset,
-                 depth);
+
+    Matrix4f mv = vecgl::translate(*m.modelview,
+                                   (int)a.position.x() + hOffset + PixelOffset,
+                                   (int)a.position.y() + vOffset + PixelOffset,
+                                   depth);
+
     font[fs]->bind();
+    font[fs]->setMVPMatrix((*m.projection) * mv);
     font[fs]->render(a.labelText, 0.0f, 0.0f);
     font[fs]->flush();
-    glPopMatrix();
 }
 
 // stars and constellations. DSOs
-void Renderer::renderAnnotations(const vector<Annotation>& annotations, FontStyle fs)
+void Renderer::renderAnnotations(const vector<Annotation>& annotations,
+                                 FontStyle fs)
 {
     if (font[fs] == nullptr)
         return;
@@ -4840,21 +4869,17 @@ void Renderer::renderAnnotations(const vector<Annotation>& annotations, FontStyl
 #ifdef USE_HDR
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 #endif
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    enableBlending();
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    glMatrixMode(GL_PROJECTION);
-    glPushMatrix();
-    glLoadMatrix(m_orthoProjMatrix);
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-    glLoadIdentity();
+    Matrix4f mv = Matrix4f::Identity();
+    Matrices m = { &m_orthoProjMatrix, &mv };
 
     for (int i = 0; i < (int) annotations.size(); i++)
     {
         if (annotations[i].markerRep != nullptr)
         {
-            renderAnnotationMarker(annotations[i], fs, 0.0f);
+            renderAnnotationMarker(annotations[i], fs, 0.0f, m);
         }
 
         if (!annotations[i].labelText.empty())
@@ -4893,14 +4918,10 @@ void Renderer::renderAnnotations(const vector<Annotation>& annotations, FontStyl
                 vOffset = 0;
                 break;
             }
-            renderAnnotationLabel(annotations[i], fs, hOffset, vOffset, 0.0f);
+            renderAnnotationLabel(annotations[i], fs, hOffset, vOffset, 0.0f, m);
         }
     }
 
-    glPopMatrix();
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-    glMatrixMode(GL_MODELVIEW);
 #ifdef USE_HDR
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 #endif
@@ -4913,9 +4934,9 @@ void Renderer::renderAnnotations(const vector<Annotation>& annotations, FontStyl
 void
 Renderer::renderBackgroundAnnotations(FontStyle fs)
 {
-    glEnable(GL_DEPTH_TEST);
+    enableDepthTest();
     renderAnnotations(backgroundAnnotations, fs);
-    glDisable(GL_DEPTH_TEST);
+    disableDepthTest();
 
     clearAnnotations(backgroundAnnotations);
 }
@@ -4924,7 +4945,7 @@ Renderer::renderBackgroundAnnotations(FontStyle fs)
 void
 Renderer::renderForegroundAnnotations(FontStyle fs)
 {
-    glDisable(GL_DEPTH_TEST);
+    disableDepthTest();
     renderAnnotations(foregroundAnnotations, fs);
 
     clearAnnotations(foregroundAnnotations);
@@ -4953,16 +4974,12 @@ Renderer::renderAnnotations(vector<Annotation>::iterator startIter,
     if (font[fs] == nullptr)
         return endIter;
 
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    enableDepthTest();
+    enableBlending();
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    glMatrixMode(GL_PROJECTION);
-    glPushMatrix();
-    glLoadMatrix(m_orthoProjMatrix);
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-    glLoadIdentity();
+    Matrix4f mv = Matrix4f::Identity();
+    Matrices m = { &m_orthoProjMatrix, &mv };
 
     // Precompute values that will be used to generate the normalized device z value;
     // we're effectively just handling the projection instead of OpenGL. We use an orthographic
@@ -4983,7 +5000,7 @@ Renderer::renderAnnotations(vector<Annotation>::iterator startIter,
 
         if (iter->markerRep != nullptr)
         {
-            renderAnnotationMarker(*iter, fs, ndc_z);
+            renderAnnotationMarker(*iter, fs, ndc_z, m);
         }
 
         if (!iter->labelText.empty())
@@ -4991,15 +5008,11 @@ Renderer::renderAnnotations(vector<Annotation>::iterator startIter,
             if (iter->markerRep != nullptr)
                 labelHOffset += (int) iter->markerRep->size() / 2 + 3;
 
-            renderAnnotationLabel(*iter, fs, labelHOffset, labelVOffset, ndc_z);
+            renderAnnotationLabel(*iter, fs, labelHOffset, labelVOffset, ndc_z, m);
         }
     }
 
-    glPopMatrix();
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-    glMatrixMode(GL_MODELVIEW);
-    glDisable(GL_DEPTH_TEST);
+    disableDepthTest();
     font[fs]->unbind();
 
     return iter;
@@ -5217,43 +5230,111 @@ void Renderer::setViewport(const std::array<int, 4>& viewport) const
 
 void Renderer::setScissor(int x, int y, int w, int h)
 {
-    if ((m_GLStateFlag & ScissorTest) == 0)
+    if (!m_GLState.scissor)
     {
         glEnable(GL_SCISSOR_TEST);
-        m_GLStateFlag |= ScissorTest;
+        m_GLState.scissor = true;
     }
     glScissor(x, y, w, h);
 }
 
 void Renderer::removeScissor()
 {
-    if ((m_GLStateFlag & ScissorTest) != 0)
+    if (m_GLState.scissor)
     {
         glDisable(GL_SCISSOR_TEST);
-        m_GLStateFlag &= ~ScissorTest;
+        m_GLState.scissor = false;
     }
 }
 
-void Renderer::enableMSAA()
+void Renderer::enableMSAA() noexcept
 {
-    if ((m_GLStateFlag & Multisaple) == 0)
+#ifndef GL_ES
+    if (!m_GLState.multisample)
     {
         glEnable(GL_MULTISAMPLE);
-        m_GLStateFlag |= Multisaple;
+        m_GLState.multisample = true;
     }
+#endif
 }
-void Renderer::disableMSAA()
+void Renderer::disableMSAA() noexcept
 {
-    if ((m_GLStateFlag & Multisaple) != 0)
+#ifndef GL_ES
+    if (m_GLState.multisample)
     {
         glDisable(GL_MULTISAMPLE);
-        m_GLStateFlag &= ~Multisaple;
+        m_GLState.multisample = false;
+    }
+#endif
+}
+
+bool Renderer::isMSAAEnabled() const noexcept
+{
+    return m_GLState.multisample;
+}
+
+void Renderer::enableBlending() noexcept
+{
+    if (!m_GLState.blending)
+    {
+        glEnable(GL_BLEND);
+        m_GLState.blending = true;
     }
 }
 
-bool Renderer::isMSAAEnabled() const
+void Renderer::disableBlending() noexcept
 {
-    return (m_GLStateFlag & Multisaple) != 0;;
+    if (m_GLState.blending)
+    {
+        glDisable(GL_BLEND);
+        m_GLState.blending = false;
+    }
+}
+
+void Renderer::setBlendingFactors(GLenum sfactor, GLenum dfactor) noexcept
+{
+    if (m_GLState.sfactor != sfactor || m_GLState.dfactor != dfactor)
+    {
+        glBlendFunc(sfactor, dfactor);
+        m_GLState.sfactor = sfactor;
+        m_GLState.dfactor = dfactor;
+    }
+}
+
+void Renderer::enableDepthMask() noexcept
+{
+    if (!m_GLState.depthMask)
+    {
+        glDepthMask(GL_TRUE);
+        m_GLState.depthMask = true;
+    }
+}
+
+void Renderer::disableDepthMask() noexcept
+{
+    if (m_GLState.depthMask)
+    {
+        glDepthMask(GL_FALSE);
+        m_GLState.depthMask = false;
+    }
+}
+
+void Renderer::enableDepthTest() noexcept
+{
+    if (!m_GLState.depthTest)
+    {
+        glEnable(GL_DEPTH_TEST);
+        m_GLState.depthTest = true;
+    }
+}
+
+void Renderer::disableDepthTest() noexcept
+{
+    if (m_GLState.depthTest)
+    {
+        glDisable(GL_DEPTH_TEST);
+        m_GLState.depthTest = false;
+    }
 }
 
 constexpr GLenum toGLFormat(Renderer::PixelFormat format)
@@ -5263,13 +5344,15 @@ constexpr GLenum toGLFormat(Renderer::PixelFormat format)
 
 bool Renderer::captureFrame(int x, int y, int w, int h, Renderer::PixelFormat format, unsigned char* buffer, bool back) const
 {
+#ifndef GL_ES
     glReadBuffer(back ? GL_BACK : GL_FRONT);
+#endif
     glReadPixels(x, y, w, h, toGLFormat(format), GL_UNSIGNED_BYTE, (void*) buffer);
 
     return glGetError() == GL_NO_ERROR;
 }
 
-void Renderer::drawRectangle(const Rect &r)
+void Renderer::drawRectangle(const Rect &r, const Matrix4f &mvp)
 {
     ShaderProperties shadprop;
     shadprop.lightModel = ShaderProperties::UnlitModel;
@@ -5308,6 +5391,7 @@ void Renderer::drawRectangle(const Rect &r)
     }
 
     prog->use();
+    prog->MVPMatrix = mvp;
 
     if (r.type != Rect::Type::BorderOnly)
     {
@@ -5372,6 +5456,7 @@ bool Renderer::getInfo(map<string, string>& info) const
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
     info["MaxTextureSize"] = to_string(maxTextureSize);
 
+#ifndef GL_ES
     GLint maxTextureUnits = 1;
     glGetIntegerv(GL_MAX_TEXTURE_UNITS, &maxTextureUnits);
     info["MaxTextureUnits"] = to_string(maxTextureUnits);
@@ -5385,10 +5470,6 @@ bool Renderer::getInfo(map<string, string>& info) const
     glGetFloatv(GL_SMOOTH_POINT_SIZE_GRANULARITY, &pointSizeGran);
     info["PointSizeGran"] = fmt::sprintf("%.2f", pointSizeGran);
 
-    GLint maxCubeMapSize = 0;
-    glGetIntegerv(GL_MAX_CUBE_MAP_TEXTURE_SIZE, &maxCubeMapSize);
-    info["MaxCubeMapSize"] = to_string(maxCubeMapSize);
-
     GLint maxVaryings = 0;
     glGetIntegerv(GL_MAX_VARYING_FLOATS, &maxVaryings);
     info["MaxVaryingFloats"] = to_string(maxVaryings);
@@ -5399,6 +5480,13 @@ bool Renderer::getInfo(map<string, string>& info) const
         glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maxAnisotropy);
         info["MaxAnisotropy"] = fmt::sprintf("%.2f", maxAnisotropy);
     }
+#endif
+
+#if 0 // we don't use cubemaps yet
+    GLint maxCubeMapSize = 0;
+    glGetIntegerv(GL_MAX_CUBE_MAP_TEXTURE_SIZE, &maxCubeMapSize);
+    info["MaxCubeMapSize"] = to_string(maxCubeMapSize);
+#endif
 
     s = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
     if (s != nullptr)
@@ -5426,7 +5514,9 @@ Renderer::getShadowFBO(int index) const
 void
 Renderer::createShadowFBO()
 {
-    m_shadowFBO = make_unique<FramebufferObject>(m_shadowMapSize, m_shadowMapSize, FramebufferObject::DepthAttachment);
+    m_shadowFBO = unique_ptr<FramebufferObject>(new FramebufferObject(m_shadowMapSize,
+                                                                      m_shadowMapSize,
+                                                                      FramebufferObject::DepthAttachment));
     if (!m_shadowFBO->isValid())
     {
         clog << "Error creating shadow FBO.\n";
@@ -5919,9 +6009,8 @@ Renderer::renderSolarSystemObjects(const Observer &observer,
 
         // Set up a perspective projection using the current interval's near and
         // far clip planes.
-        glMatrixMode(GL_PROJECTION);
-        glLoadMatrix(Perspective(fov, getAspectRatio(), nearPlaneDistance, farPlaneDistance));
-        glMatrixMode(GL_MODELVIEW);
+        Matrix4f proj = Perspective(fov, getAspectRatio(), nearPlaneDistance, farPlaneDistance);
+        Matrices m = { &proj, &m_modelMatrix };
 
         Frustum intervalFrustum(degToRad(fov),
                                 getAspectRatio(),
@@ -5940,7 +6029,7 @@ Renderer::renderSolarSystemObjects(const Observer &observer,
             // Treat objects that are smaller than one pixel as transparent and
             // render them in the second pass.
             if (renderList[i].isOpaque && renderList[i].discSizeInPixels > 1.0f)
-                renderItem(renderList[i], observer, nearPlaneDistance, farPlaneDistance);
+                renderItem(renderList[i], observer, nearPlaneDistance, farPlaneDistance, m);
 
             i--;
         }
@@ -5948,12 +6037,12 @@ Renderer::renderSolarSystemObjects(const Observer &observer,
         // Render orbit paths
         if (!orbitPathList.empty())
         {
-            glEnable(GL_DEPTH_TEST);
-            glDepthMask(GL_FALSE);
+            enableDepthTest();
+            disableDepthMask();
 #ifdef USE_HDR
-            glBlendFunc(GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA);
+            setBlendingFactors(GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA);
 #else
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 #endif
             enableSmoothLines();
 
@@ -5972,12 +6061,13 @@ Renderer::renderSolarSystemObjects(const Observer &observer,
                                 observer.getOrientation(),
                                 intervalFrustum,
                                 nearPlaneDistance,
-                                farPlaneDistance);
+                                farPlaneDistance,
+                                m);
                 }
             }
 
             disableSmoothLines();
-            glDepthMask(GL_FALSE);
+            disableDepthMask();
         }
 
         // Render transparent objects in the second pass
@@ -5985,7 +6075,7 @@ Renderer::renderSolarSystemObjects(const Observer &observer,
         while (i >= 0 && renderList[i].farZ < depthPartitions[interval].nearZ)
         {
             if (!renderList[i].isOpaque || renderList[i].discSizeInPixels <= 1.0f)
-                renderItem(renderList[i], observer, nearPlaneDistance, farPlaneDistance);
+                renderItem(renderList[i], observer, nearPlaneDistance, farPlaneDistance, m);
 
             i--;
         }
@@ -5998,7 +6088,7 @@ Renderer::renderSolarSystemObjects(const Observer &observer,
                                              FontNormal);
         endObjectAnnotations();
         disableSmoothLines();
-        glDisable(GL_DEPTH_TEST);
+        disableDepthTest();
     }
 
     // reset the depth range

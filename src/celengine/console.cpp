@@ -8,21 +8,16 @@
 // of the License, or (at your option) any later version.
 
 #include <cstring>
-#include <cstdarg>
 #include <cassert>
 #include <algorithm>
 #include <iostream>
-#include <celutil/utf8.h>
 #include <celmath/geomutil.h>
-#include "glsupport.h"
-#include "vecgl.h"
-#include "console.h"
-#include "shadermanager.h"
-#if NO_TTF
-#include <celtxf/texturefont.h>
-#else
 #include <celttf/truetypefont.h>
-#endif
+#include <celutil/utf8.h>
+#include "console.h"
+#include "render.h"
+#include "shadermanager.h"
+#include "vecgl.h"
 
 using namespace std;
 using namespace celmath;
@@ -33,7 +28,8 @@ static int pmod(int n, int m)
 }
 
 
-Console::Console(int _nRows, int _nColumns) :
+Console::Console(Renderer& _renderer, int _nRows, int _nColumns) :
+    renderer(_renderer),
     ostream(&sbuf),
     nRows(_nRows),
     nColumns(_nColumns)
@@ -80,15 +76,10 @@ bool Console::setRowCount(int _nRows)
 
 void Console::begin()
 {
-    glMatrixMode(GL_PROJECTION);
-    glPushMatrix();
-    glLoadMatrix(Ortho2D(0.0f, (float)xscale, 0.0f, (float)yscale));
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-    glLoadIdentity();
+    mpv = Ortho2D(0.0f, (float)xscale, 0.0f, (float)yscale);
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    renderer.enableBlending();
+    renderer.setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     global.reset();
 }
@@ -96,11 +87,8 @@ void Console::begin()
 
 void Console::end()
 {
-    font->unbind();
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-    glMatrixMode(GL_MODELVIEW);
-    glPopMatrix();
+    if (font != nullptr)
+        font->unbind();
 }
 
 
@@ -110,6 +98,7 @@ void Console::render(int rowHeight)
         return;
 
     font->bind();
+    font->setMVPMatrix(mpv);
     savePos();
     for (int i = 0; i < rowHeight; i++)
     {
@@ -278,6 +267,28 @@ void Console::restorePos()
         posStack.pop_back();
     }
     xoffset = 0.0f;
+}
+
+
+void Console::scroll(int lines)
+{
+    int topRow = getWindowRow();
+    int height = getHeight();
+
+    if (lines < 0)
+    {
+        if (topRow + lines > -height)
+            setWindowRow(topRow + lines);
+        else
+            setWindowRow(-(height - 1));
+    }
+    else
+    {
+        if (topRow + lines <= -Console::PageRows)
+            setWindowRow(topRow + lines);
+        else
+            setWindowRow(-Console::PageRows);
+    }
 }
 
 

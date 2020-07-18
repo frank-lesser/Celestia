@@ -53,6 +53,8 @@ struct UnicodeBlock
 
 struct TextureFontPrivate
 {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
     struct FontVertex
     {
         FontVertex(float _x, float _y, float _u, float _v) :
@@ -82,9 +84,11 @@ struct TextureFontPrivate
     Glyph& getGlyph(wchar_t, wchar_t);
     int toPos(wchar_t) const;
     void optimize();
+    CelestiaGLProgram* getProgram();
     void flush();
 
     const Renderer *m_renderer;
+    CelestiaGLProgram *m_prog { nullptr };
 
     FT_Face m_face;         // font face
 
@@ -95,7 +99,7 @@ struct TextureFontPrivate
     int m_texWidth;
     int m_texHeight;
 
-    GLuint m_texName;       // texture object
+    GLuint m_texName { 0 };       // texture object
     vector<Glyph> m_glyphs; // character information
     GLint m_maxTextureSize; // max supported texture size
 
@@ -104,6 +108,8 @@ struct TextureFontPrivate
 
     int m_inserted { 0 };
 
+    Eigen::Matrix4f m_MVP;
+    bool m_shaderInUse { false };
     vector<FontVertex> m_fontVertices;
 };
 
@@ -174,8 +180,6 @@ void TextureFontPrivate::initCommonGlyphs()
 
 void TextureFontPrivate::computeTextureSize()
 {
-    FT_GlyphSlot g = m_face->glyph;
-
     int roww = 0;
     int rowh = 0;
     int w = 0;
@@ -207,7 +211,6 @@ void TextureFontPrivate::computeTextureSize()
 bool TextureFontPrivate::buildAtlas()
 {
     FT_GlyphSlot g = m_face->glyph;
-    Glyph c;
 
     initCommonGlyphs();
     computeTextureSize();
@@ -251,7 +254,7 @@ bool TextureFontPrivate::buildAtlas()
            continue;
         }
 
-        if (ox + g->bitmap.width > m_texWidth)
+        if (ox + int(g->bitmap.width) > int(m_texWidth))
         {
             oy += rowh;
             rowh = 0;
@@ -317,7 +320,7 @@ Glyph& TextureFontPrivate::getGlyph(wchar_t ch, wchar_t fallback)
     return g.ch == ch ? g : getGlyph(fallback);
 }
 
-Glyph g_badGlyph = {0};
+Glyph g_badGlyph = {0, 0, 0, 0, 0, 0, 0, 0.0f, 0.0f};
 Glyph& TextureFontPrivate::getGlyph(wchar_t ch)
 {
     auto pos = toPos(ch);
@@ -335,6 +338,8 @@ Glyph& TextureFontPrivate::getGlyph(wchar_t ch)
     if (!loadGlyphInfo(ch, c))
         return g_badGlyph;
 
+    flush(); // render text to avoid garbled output due to changed texture
+
     m_glyphs.push_back(c);
     if (++m_inserted == 10)
         optimize();
@@ -348,15 +353,6 @@ void TextureFontPrivate::optimize()
     m_inserted = 0;
 }
 
-
-struct FontVertex
-{
-    FontVertex(float _x, float _y, float _u, float _v) :
-        x(_x), y(_y), u(_u), v(_v)
-    {}
-    float x, y;
-    float u, v;
-};
 /*
  * Render text using the currently loaded font and currently set font size.
  * Rendering starts at coordinates (x, y), z is always 0.
@@ -437,6 +433,14 @@ float TextureFontPrivate::render(wchar_t ch, float xoffset, float yoffset)
     m_fontVertices.emplace_back(FontVertex(x2, y2, tx2, ty1));
 
     return g.ax;
+}
+
+CelestiaGLProgram* TextureFontPrivate::getProgram()
+{
+    if (m_prog != nullptr)
+        return m_prog;
+    m_prog = m_renderer->getShaderManager().getShader("text");
+    return m_prog;
 }
 
 void TextureFontPrivate::flush()
@@ -580,7 +584,7 @@ int TextureFont::getTextureName() const
 
 void TextureFont::bind()
 {
-    auto *prog = impl->m_renderer->getShaderManager().getShader("text");
+    auto *prog = impl->getProgram();
     if (prog == nullptr)
         return;
 
@@ -590,12 +594,26 @@ void TextureFont::bind()
         glBindTexture(GL_TEXTURE_2D, impl->m_texName);
         prog->use();
         prog->samplerParam("atlasTex") = 0;
+        impl->m_shaderInUse = true;
+        prog->mat4Param("MVPMatrix") = impl->m_MVP;
+    }
+}
+
+void TextureFont::setMVPMatrix(const Eigen::Matrix4f& mvp)
+{
+    impl->m_MVP = mvp;
+    auto *prog = impl->getProgram();
+    if (prog != nullptr && impl->m_shaderInUse)
+    {
+        flush();
+        prog->mat4Param("MVPMatrix") = mvp;
     }
 }
 
 void TextureFont::unbind()
 {
     flush();
+    impl->m_shaderInUse = false;
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
     glUseProgram(0);
@@ -617,11 +635,11 @@ void TextureFont::flush()
     impl->flush();
 }
 
-TextureFont* TextureFont::load(const Renderer *r, const fs::path &path, int size, int dpi)
+TextureFont* TextureFont::load(const Renderer *r, const fs::path &path, int index, int size, int dpi)
 {
     FT_Face face;
 
-    if (FT_New_Face(ft, path.string().c_str(), 0, &face) != 0)
+    if (FT_New_Face(ft, path.string().c_str(), index, &face) != 0)
     {
         fmt::fprintf(cerr, "Could not open font %s\n", path);
         return nullptr;
@@ -652,14 +670,26 @@ TextureFont* TextureFont::load(const Renderer *r, const fs::path &path, int size
 }
 
 // temporary while no fontconfig support
-static fs::path ParseFontName(const fs::path &filename, int &size)
+static fs::path ParseFontName(const fs::path &filename, int &collectionIndex, int &size)
 {
+    // Format with font path/collection index(if any)/font size(if any)
     auto fn = filename.string();
     auto pos = fn.rfind(',');
     if (pos != string::npos)
     {
         size = (int) stof(fn.substr(pos + 1));
-        return fn.substr(0, pos);
+        auto rest = fn.substr(0, pos);
+
+        pos = rest.rfind(',');
+        if (pos != string::npos)
+        {
+            collectionIndex = stof(rest.substr(pos + 1));
+            return rest.substr(0, pos);
+        }
+        else
+        {
+            return rest;
+        }
     }
     else
     {
@@ -668,7 +698,7 @@ static fs::path ParseFontName(const fs::path &filename, int &size)
     }
 }
 
-TextureFont* LoadTextureFont(const Renderer *r, const fs::path &filename, int size, int dpi)
+TextureFont* LoadTextureFont(const Renderer *r, const fs::path &filename, int index, int size, int dpi)
 {
     if (ft == nullptr)
     {
@@ -680,6 +710,7 @@ TextureFont* LoadTextureFont(const Renderer *r, const fs::path &filename, int si
     }
 
     int psize = 0;
-    auto nameonly = ParseFontName(filename, psize);
-    return TextureFont::load(r, nameonly, psize, dpi);
+    int pcollectionIndex = 0;
+    auto nameonly = ParseFontName(filename, pcollectionIndex, psize);
+    return TextureFont::load(r, nameonly, index > 0 ? index : pcollectionIndex, size > 0 ? size : psize, dpi);
 }

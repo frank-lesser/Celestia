@@ -454,7 +454,7 @@ static bool CreateTimeline(Body* body,
     ReferenceFrame::SharedConstPtr defaultBodyFrame;
     if (bodyType == SurfaceObject)
     {
-        defaultOrbitFrame = make_shared<BodyFixedFrame>(parentObject, parentObject);
+        defaultOrbitFrame = shared_ptr<BodyFixedFrame>(new BodyFixedFrame(parentObject, parentObject));
         defaultBodyFrame = CreateTopocentricFrame(parentObject, parentObject, Selection(body));
     }
     else
@@ -1084,7 +1084,8 @@ bool LoadSolarSystemObjects(istream& in,
     Parser parser(&tokenizer);
 
 #ifdef ENABLE_NLS
-    const char* d = directory.string().c_str();
+    string s = directory.string();
+    const char* d = s.c_str();
     bindtextdomain(d, d); // domain name is the same as resource path
 #endif
 

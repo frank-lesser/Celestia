@@ -10,16 +10,15 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
-#include "render.h"
-#include "visibleregion.h"
+#include <cmath>
+#include <Eigen/Geometry>
+#include <celmath/intersect.h>
 #include "body.h"
+#include "render.h"
 #include "selection.h"
 #include "vecgl.h"
 #include "vertexobject.h"
-#include <celmath/intersect.h>
-#include <Eigen/Core>
-#include <Eigen/Geometry>
-#include <cmath>
+#include "visibleregion.h"
 
 using namespace Eigen;
 using namespace celmath;
@@ -84,7 +83,10 @@ VisibleRegion::setOpacity(float opacity)
 constexpr const unsigned maxSections = 360;
 
 static void
-renderTerminator(Renderer* renderer, const vector<Vector3f>& pos, const Color& color)
+renderTerminator(Renderer* renderer,
+                 const vector<Vector3f>& pos,
+                 const Color& color,
+                 const Matrix4f& mvp)
 {
     /*!
      * Proper terminator calculation requires double precision floats in GLSL
@@ -112,6 +114,7 @@ renderTerminator(Renderer* renderer, const vector<Vector3f>& pos, const Color& c
     vo.setBufferData(pos.data(), 0, pos.size() * sizeof(Vector3f));
 
     prog->use();
+    prog->MVPMatrix = mvp;
     glVertexAttrib(CelestiaGLProgram::ColorAttributeIndex, color);
 
     vo.draw(GL_LINE_LOOP, pos.size());
@@ -123,9 +126,10 @@ renderTerminator(Renderer* renderer, const vector<Vector3f>& pos, const Color& c
 
 void
 VisibleRegion::render(Renderer* renderer,
-                      const Vector3f& /* pos */,
+                      const Vector3f& position,
                       float discSizeInPixels,
-                      double tdb) const
+                      double tdb,
+                      const Matrices& m) const
 {
     // Don't render anything if the current time is not within the
     // target object's time window.
@@ -161,17 +165,14 @@ VisibleRegion::render(Renderer* renderer,
     Vector3f semiAxes = m_body.getSemiAxes();
 
     // Enable depth buffering
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    glEnable(GL_BLEND);
+    renderer->enableDepthTest();
+    renderer->enableDepthMask();
+    renderer->enableBlending();
 #ifdef USE_HDR
-    glBlendFunc(GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA);
+    renderer->setBlendingFactors(GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA);
 #else
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    renderer->setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 #endif
-
-    glPushMatrix();
-    glRotate(qf.conjugate());
 
     double maxSemiAxis = m_body.getRadius();
 
@@ -211,14 +212,14 @@ VisibleRegion::render(Renderer* renderer,
         pos.push_back(toCenter.cast<float>());
     }
 
-    renderTerminator(renderer, pos, Color(m_color, opacity));
+    Affine3f transform = Translation3f(position) * qf.conjugate();
+    Matrix4f mvp = (*m.projection) * (*m.modelview) * transform.matrix();
+    renderTerminator(renderer, pos, Color(m_color, opacity), mvp);
 
-    glPopMatrix();
-
-    glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    renderer->disableDepthTest();
+    renderer->disableDepthMask();
+    renderer->enableBlending();
+    renderer->setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
 }
 
 

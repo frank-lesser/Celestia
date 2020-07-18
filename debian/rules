@@ -26,7 +26,14 @@ override_dh_auto_configure:
 
 
 override_dh_install:
+	find debian/tmp/usr/bin/ -type f ! -name *.pl -exec chrpath --delete {} ';'
+	chrpath --delete debian/tmp/usr/lib/*/libcelestia.so.*
 	dh_install --fail-missing
 	mv debian/celestia-common/usr/share/celestia/celestia.cfg \
 	   debian/celestia-common/etc/celestia.cfg
 	ln -s /etc/celestia.cfg debian/celestia-common/usr/share/celestia/
+	rm debian/celestia-common/usr/share/celestia/fonts/*
+	ln -s /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+	      debian/celestia-common/usr/share/celestia/fonts/
+	ln -s /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf \
+	      debian/celestia-common/usr/share/celestia/fonts/

@@ -13,6 +13,7 @@
 #include <iosfwd>
 #include <string>
 #include <vector>
+#include <Eigen/Core>
 
 class Color;
 class Overlay;
@@ -50,6 +51,8 @@ class OverlayStreamBuf : public std::streambuf
 class Overlay : public std::ostream
 {
  public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
     Overlay(Renderer&);
     Overlay() = delete;
     ~Overlay() = default;
@@ -91,8 +94,6 @@ class Overlay : public std::ostream
     float xoffset{ 0.0f };
     float yoffset{ 0.0f };
 
-    float lineWidth { 1.0f };
-
     OverlayStreamBuf sbuf;
 
     Renderer& renderer;
@@ -107,6 +108,7 @@ class Overlay : public std::ostream
     };
     CursorPosition global { 0.0f, 0.0f };
     std::vector<CursorPosition> posStack;
+    Eigen::Matrix4f mvp;
 };
 
 #endif // _OVERLAY_H_

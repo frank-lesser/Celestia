@@ -39,22 +39,36 @@ if(ENABLE_CELX)
   set(SCRIPT_LIBS ${SCRIPT_LIBS} $<TARGET_OBJECTS:celluascript>)
 endif()
 
-add_library(celestia STATIC ${CELESTIA_SOURCES} ${SCRIPT_LIBS})
+string(REPLACE "." ";" PROJECT_VERSION_LIST ${PROJECT_VERSION})
+list(GET PROJECT_VERSION_LIST 0 PROJECT_VERSION_MAJOR)
+list(GET PROJECT_VERSION_LIST 1 PROJECT_VERSION_MINOR)
+set(CELSO "celestia-${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
 
-#[[
-add_library(celestia SHARED ${CELESTIA_SOURCES})
-set_target_properties(celestia PROPERTIES
-  VERSION ${VERSION}
-  SOVERSION ${VERSION}
+add_library(celestia SHARED ${CELESTIA_SOURCES}
+                            ${SCRIPT_LIBS}
+                            $<TARGET_OBJECTS:cel3ds>
+                            $<TARGET_OBJECTS:celcompat>
+                            $<TARGET_OBJECTS:celengine>
+                            $<TARGET_OBJECTS:celephem>
+                            $<TARGET_OBJECTS:celmath>
+                            $<TARGET_OBJECTS:celmodel>
+                            $<TARGET_OBJECTS:celttf>
+                            $<TARGET_OBJECTS:celutil>
 )
-]]#
 
-add_dependencies(celestia celengine celmath celutil)
-target_link_libraries(celestia celengine celmath celutil)
+set_target_properties(celestia PROPERTIES
+  VERSION ${PROJECT_VERSION}
+  SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
+  WINDOWS_EXPORT_ALL_SYMBOLS TRUE
+)
+
+if(ENABLE_SPICE)
+  target_link_libraries(celestia CSPICE::CSPICE)
+endif()
 
 cotire(celestia)
 
-#install(TARGETS celestia LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(TARGETS celestia LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} NAMELINK_SKIP)
 
 add_subdirectory(glut)
 add_subdirectory(gtk)

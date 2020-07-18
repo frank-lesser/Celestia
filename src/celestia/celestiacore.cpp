@@ -38,7 +38,6 @@
 #include <celutil/gettext.h>
 #include <celutil/utf8.h>
 #include <celcompat/filesystem.h>
-#include <celcompat/memory.h>
 #include <Eigen/Geometry>
 #include <iostream>
 #include <fstream>
@@ -55,11 +54,7 @@
 #ifdef CELX
 #include <celephem/scriptobject.h>
 #endif
-#if NO_TTF
-#include <celtxf/texturefont.h>
-#else
 #include <celttf/truetypefont.h>
-#endif
 
 #include "imagecapture.h"
 
@@ -88,8 +83,6 @@ static const float MinimumFOV = degToRad(0.001f);
 static float KeyRotationAccel = degToRad(120.0f);
 static float MouseRotationSensitivity = degToRad(1.0f);
 
-static const int ConsolePageRows = 10;
-static Console console(200, 120);
 
 static void warning(string s)
 {
@@ -101,7 +94,8 @@ static bool is_valid_directory(const fs::path& dir)
     if (dir.empty())
         return false;
 
-    if (!is_directory(dir))
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec))
     {
         fmt::fprintf(cerr, "Path %s doesn't exist or isn't a directory", dir);
         return false;
@@ -141,17 +135,18 @@ float ComputeRotationCoarseness(Simulation& sim)
 
 
 CelestiaCore::CelestiaCore() :
-    oldFOV(stdFOV),
     /* Get a renderer here so it may be queried for capabilities of the
        underlying engine even before rendering is enabled. It's initRenderer()
        routine will be called much later. */
     renderer(new Renderer()),
     timer(new Timer()),
-    m_legacyPlugin(make_unique<LegacyScriptPlugin>(this)),
+    m_legacyPlugin(new LegacyScriptPlugin(this)),
 #ifdef CELX
-    m_luaPlugin(make_unique<LuaScriptPlugin>(this)),
+    m_luaPlugin(new LuaScriptPlugin(this)),
 #endif
-    m_scriptMaps(make_shared<ScriptMaps>())
+    m_scriptMaps(new ScriptMaps()),
+    oldFOV(stdFOV),
+    console(new Console(*renderer, 200, 120))
 {
 
     for (int i = 0; i < KeyCount; i++)
@@ -162,9 +157,9 @@ CelestiaCore::CelestiaCore() :
     for (int i = 0; i < JoyButtonCount; i++)
         joyButtonsPressed[i] = false;
 
-    clog.rdbuf(console.rdbuf());
-    cerr.rdbuf(console.rdbuf());
-    console.setWindowHeight(ConsolePageRows);
+    clog.rdbuf(console->rdbuf());
+    cerr.rdbuf(console->rdbuf());
+    console->setWindowHeight(Console::PageRows);
 }
 
 CelestiaCore::~CelestiaCore()
@@ -735,28 +730,6 @@ void CelestiaCore::joystickButton(int button, bool down)
 }
 
 
-static void scrollConsole(Console& con, int lines)
-{
-    int topRow = con.getWindowRow();
-    int height = con.getHeight();
-
-    if (lines < 0)
-    {
-        if (topRow + lines > -height)
-            console.setWindowRow(topRow + lines);
-        else
-            console.setWindowRow(-(height - 1));
-    }
-    else
-    {
-        if (topRow + lines <= -ConsolePageRows)
-            console.setWindowRow(topRow + lines);
-        else
-            console.setWindowRow(-ConsolePageRows);
-    }
-}
-
-
 void CelestiaCore::keyDown(int key, int modifiers)
 {
     setViewChanged();
@@ -811,24 +784,24 @@ void CelestiaCore::keyDown(int key, int modifiers)
 
     case Key_Down:
         if (showConsole)
-            scrollConsole(console, 1);
+            console->scroll(1);
         break;
 
     case Key_Up:
         if (showConsole)
-            scrollConsole(console, -1);
+            console->scroll(-1);
         break;
 
     case Key_PageDown:
         if (showConsole)
-            scrollConsole(console, ConsolePageRows);
+            console->scroll(Console::PageRows);
         else
             back();
         break;
 
     case Key_PageUp:
         if (showConsole)
-            scrollConsole(console, -ConsolePageRows);
+            console->scroll(-Console::PageRows);
         else
             forward();
         break;
@@ -1178,7 +1151,7 @@ void CelestiaCore::charEntered(const char *c_p, int modifiers)
 
     case '\027':  // Ctrl+W
         wireframe = !wireframe;
-        renderer->setRenderMode(wireframe ? GL_LINE : GL_FILL);
+        renderer->setRenderMode(wireframe ? RenderMode::Line : RenderMode::Fill);
         break;
 
     case '\030':  // Ctrl+X
@@ -2116,12 +2089,12 @@ void CelestiaCore::draw()
     renderOverlay();
     if (showConsole)
     {
-        console.setFont(font);
-        console.setColor(1.0f, 1.0f, 1.0f, 1.0f);
-        console.begin();
-        console.moveBy(0.0f, 200.0f);
-        console.render(ConsolePageRows);
-        console.end();
+        console->setFont(font);
+        console->setColor(1.0f, 1.0f, 1.0f, 1.0f);
+        console->begin();
+        console->moveBy(safeAreaInsets.left, screenDpi / 25.4f * 53.0f);
+        console->render(Console::PageRows);
+        console->end();
     }
 
     if (toggleAA)
@@ -2161,7 +2134,7 @@ void CelestiaCore::resize(GLsizei w, GLsizei h)
     }
     if (overlay != nullptr)
         overlay->setWindowSize(w, h);
-    console.setScale(w, h);
+    console->setScale(w, h);
     width = w;
     height = h;
 
@@ -2170,6 +2143,11 @@ void CelestiaCore::resize(GLsizei w, GLsizei h)
         return;
 }
 
+
+void CelestiaCore::setSafeAreaInsets(int left, int top, int right, int bottom)
+{
+    safeAreaInsets = { left, top, right, bottom };
+}
 
 // Return true if anything changed that requires re-rendering. Otherwise, we
 // can skip rendering, keep the GPU idle, and save power.
@@ -3011,7 +2989,7 @@ void CelestiaCore::renderOverlay()
         // Time and date
         overlay->savePos();
         overlay->setColor(0.7f, 0.7f, 1.0f, 1.0f);
-        overlay->moveBy(width - dateStrWidth, height - fontHeight);
+        overlay->moveBy(width - safeAreaInsets.right - dateStrWidth, height - safeAreaInsets.top - fontHeight);
         overlay->beginText();
 
         overlay->print(dateStr);
@@ -3060,7 +3038,7 @@ void CelestiaCore::renderOverlay()
     {
         // Speed
         overlay->savePos();
-        overlay->moveBy(0.0f, fontHeight * 2 + 5);
+        overlay->moveBy(safeAreaInsets.left, safeAreaInsets.bottom + fontHeight * 2 + screenDpi / 25.4f * 1.3f);
         overlay->setColor(0.7f, 0.7f, 1.0f, 1.0f);
 
         overlay->beginText();
@@ -3093,7 +3071,7 @@ void CelestiaCore::renderOverlay()
     {
         // Field of view and camera mode in lower right corner
         overlay->savePos();
-        overlay->moveBy(width - emWidth * 15, fontHeight * 3 + 5);
+        overlay->moveBy(width - safeAreaInsets.right - emWidth * 15, safeAreaInsets.bottom + fontHeight * 3 + screenDpi / 25.4f * 1.3f);
         overlay->beginText();
         overlay->setColor(0.6f, 0.6f, 1.0f, 1);
 
@@ -3169,7 +3147,7 @@ void CelestiaCore::renderOverlay()
     {
         overlay->savePos();
         overlay->setColor(0.7f, 0.7f, 1.0f, 1.0f);
-        overlay->moveBy(0.0f, height - titleFont->getHeight());
+        overlay->moveBy(safeAreaInsets.left, height - safeAreaInsets.top - titleFont->getHeight());
 
         overlay->beginText();
         Vector3d v = sel.getPosition(sim->getTime()).offsetFromKm(sim->getObserver().getPosition());
@@ -3185,7 +3163,7 @@ void CelestiaCore::renderOverlay()
                     // Skip displaying the English name if a localized version is present.
                     string starName = sim->getUniverse()->getStarCatalog()->getStarName(*sel.star());
                     string locStarName = sim->getUniverse()->getStarCatalog()->getStarName(*sel.star(), true);
-                    if (sel.star()->getIndex() == 0 && selectionNames.find("Sun") != string::npos && (const char*) "Sun" != _("Sun"))
+                    if (sel.star()->getIndex() == 0 && selectionNames.find("Sun") != string::npos && strcmp("Sun", _("Sun")) != 0)
                     {
                         string::size_type startPos = selectionNames.find("Sun");
                         string::size_type endPos = selectionNames.find(_("Sun"));
@@ -3355,10 +3333,10 @@ void CelestiaCore::renderOverlay()
     {
         overlay->setFont(titleFont);
         overlay->savePos();
-        Rect r(0, 0, width, 100);
+        Rect r(0, 0, width, safeAreaInsets.bottom + screenDpi / 25.4f * 26.5f);
         r.setColor(consoleColor);
         overlay->drawRectangle(r);
-        overlay->moveBy(0.0f, fontHeight * 3.0f + 35.0f);
+        overlay->moveBy(safeAreaInsets.left, safeAreaInsets.bottom + fontHeight * 3.0f + screenDpi / 25.4f * 9.3f);
         overlay->setColor(0.6f, 0.6f, 1.0f, 1.0f);
         overlay->beginText();
         fmt::fprintf(*overlay, _("Target name: %s"), typedText);
@@ -3423,7 +3401,7 @@ void CelestiaCore::renderOverlay()
         if (currentTime > messageStart + messageDuration - 0.5)
             alpha = (float) ((messageStart + messageDuration - currentTime) / 0.5);
         overlay->setColor(textColor.red(), textColor.green(), textColor.blue(), alpha);
-        overlay->moveBy(x, y);
+        overlay->moveBy(safeAreaInsets.left + x, safeAreaInsets.bottom + y);
         overlay->beginText();
         *overlay << messageText;
         overlay->endText();
@@ -3482,10 +3460,12 @@ void CelestiaCore::renderOverlay()
     if (editMode)
     {
         overlay->savePos();
+        overlay->beginText();
         overlay->moveBy((float) ((width - font->getWidth(_("Edit Mode"))) / 2),
                         (float) (height - fontHeight));
         overlay->setColor(1, 0, 1, 1);
         *overlay << _("Edit Mode");
+        overlay->endText();
         overlay->restorePos();
     }
 
@@ -3587,7 +3567,7 @@ bool CelestiaCore::initSimulation(const fs::path& configFileName,
 
     // Set the console log size; ignore any request to use less than 100 lines
     if (config->consoleLogRows > 100)
-        console.setRowCount(config->consoleLogRows);
+        console->setRowCount(config->consoleLogRows);
 
 #ifdef USE_SPICE
     if (!InitializeSpice())
@@ -3665,17 +3645,25 @@ bool CelestiaCore::initSimulation(const fs::path& configFileName,
     }
 
     // Next, read all the deep sky files in the extras directories
-    for (const auto& dir : config->extrasDirs)
     {
-        if (!is_valid_directory(dir))
-            continue;
-
-        DeepSkyLoader loader(dsoDB,
-                             "deep sky object",
+        vector<fs::path> entries;
+        DeepSkyLoader loader(dsoDB, "deep sky object",
                              Content_CelestiaDeepSkyCatalog,
                              progressNotifier);
-        for (const auto& fn : fs::recursive_directory_iterator(dir))
-            loader.process(fn);
+        for (const auto& dir : config->extrasDirs)
+        {
+            if (!is_valid_directory(dir))
+                continue;
+
+            entries.clear();
+            for (const auto& fn : fs::recursive_directory_iterator(dir))
+            {
+                if (!fs::is_directory(fn.path()))
+                    entries.push_back(fn.path());
+            }
+            for (const auto& fn : entries)
+                loader.process(fn);
+        }
     }
     dsoDB->finish();
     universe->setDSOCatalog(dsoDB);
@@ -3706,13 +3694,21 @@ bool CelestiaCore::initSimulation(const fs::path& configFileName,
 
     // Next, read all the solar system files in the extras directories
     {
+        vector<fs::path> entries;
+        SolarSystemLoader loader(universe, progressNotifier);
         for (const auto& dir : config->extrasDirs)
         {
             if (!is_valid_directory(dir))
                 continue;
 
-            SolarSystemLoader loader(universe, progressNotifier);
+            entries.clear();
             for (const auto& fn : fs::recursive_directory_iterator(dir))
+            {
+                if (!fs::is_directory(fn.path()))
+                    entries.push_back(fn.path());
+            }
+            sort(begin(entries), end(entries));
+            for(const auto& fn : entries)
                 loader.process(fn);
         }
     }
@@ -3839,11 +3835,7 @@ bool CelestiaCore::initRenderer()
     }
 
     if (config->mainFont.empty())
-#if NO_TTF
-        font = LoadTextureFont(renderer, "fonts/default.txf");
-#else
         font = LoadTextureFont(renderer, "fonts/DejaVuSans.ttf,12");
-#endif
     else
         font = LoadFontHelper(renderer, config->mainFont);
 
@@ -3971,14 +3963,24 @@ bool CelestiaCore::readStars(const CelestiaConfig& cfg,
     }
 
     // Now, read supplemental star files from the extras directories
-    for (const auto& dir : config->extrasDirs)
     {
-        if (!is_valid_directory(dir))
-            continue;
-
+        vector<fs::path> entries;
         StarLoader loader(starDB, "star", Content_CelestiaStarCatalog, progressNotifier);
-        for (const auto& fn : fs::recursive_directory_iterator(dir))
-            loader.process(fn);
+        for (const auto& dir : config->extrasDirs)
+        {
+            if (!is_valid_directory(dir))
+                continue;
+
+            entries.clear();
+            for (const auto& fn : fs::recursive_directory_iterator(dir))
+            {
+                if (!fs::is_directory(fn.path()))
+                    entries.push_back(fn.path());
+            }
+            std::sort(begin(entries), end(entries));
+            for (const auto& fn : entries)
+                loader.process(fn);
+        }
     }
 
     starDB->finish();
@@ -4048,6 +4050,28 @@ void CelestiaCore::setContextMenuHandler(ContextMenuHandler* handler)
 CelestiaCore::ContextMenuHandler* CelestiaCore::getContextMenuHandler() const
 {
     return contextMenuHandler;
+}
+
+void CelestiaCore::setFont(const fs::path& fontPath, int collectionIndex, int fontSize)
+{
+    font = LoadTextureFont(renderer, fontPath, collectionIndex, fontSize, screenDpi);
+    if (font != nullptr)
+        font->buildTexture();
+}
+
+void CelestiaCore::setTitleFont(const fs::path& fontPath, int collectionIndex, int fontSize)
+{
+    titleFont = LoadTextureFont(renderer, fontPath, collectionIndex, fontSize, screenDpi);
+    if (titleFont != nullptr)
+        titleFont->buildTexture();
+}
+
+void CelestiaCore::setRendererFont(const fs::path& fontPath, int collectionIndex, int fontSize, Renderer::FontStyle fontStyle)
+{
+    auto f = LoadTextureFont(renderer, fontPath, collectionIndex, fontSize, screenDpi);
+    if (f != nullptr)
+        f->buildTexture();
+    renderer->setFont(fontStyle, f);
 }
 
 int CelestiaCore::getTimeZoneBias() const

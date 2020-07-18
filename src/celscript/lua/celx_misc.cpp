@@ -13,11 +13,7 @@
 #include <celscript/legacy/cmdparser.h>
 #include <celscript/legacy/execution.h>
 #include <celestia/celestiacore.h>
-#if NO_TTF
-#include <celtxf/texturefont.h>
-#else
 #include <celttf/truetypefont.h>
-#endif
 
 using namespace celestia::scripts;
 
@@ -181,6 +177,17 @@ static int font_bind(lua_State* l)
     return 0;
 }
 
+static int font_unbind(lua_State* l)
+{
+    CelxLua celx(l);
+
+    celx.checkArgs(1, 1, "No arguments expected for font:unbind()");
+
+    auto font = *celx.getThis<TextureFont*>();
+    font->unbind();
+    return 0;
+}
+
 static int font_render(lua_State* l)
 {
     CelxLua celx(l);
@@ -189,10 +196,13 @@ static int font_render(lua_State* l)
 
     const char* s = celx.safeGetString(2, AllErrors, "First argument to font:render must be a string");
     auto font = *celx.getThis<TextureFont*>();
-    float xoffset = font->render(s);
-    glTranslatef(xoffset, 0, 0);
-
-    return 0;
+#ifndef GL_ES
+    Eigen::Matrix4f p, m;
+    glGetFloatv(GL_PROJECTION_MATRIX, p.data());
+    glGetFloatv(GL_MODELVIEW_MATRIX, m.data());
+    font->setMVPMatrix(p * m);
+#endif
+    return celx.push(font->render(s));
 }
 
 static int font_getwidth(lua_State* l)
@@ -231,6 +241,7 @@ void CreateFontMetaTable(lua_State* l)
     celx.registerMethod("__tostring", font_tostring);
     celx.registerMethod("bind", font_bind);
     celx.registerMethod("render", font_render);
+    celx.registerMethod("unbind", font_unbind);
     celx.registerMethod("getwidth", font_getwidth);
     celx.registerMethod("getheight", font_getheight);
 

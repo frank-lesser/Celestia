@@ -7,21 +7,21 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
-#include <config.h>
-#include "vecgl.h"
-#include "render.h"
-#include "astro.h"
-#include "nebula.h"
-#include "meshmanager.h"
-#include "rendcontext.h"
+#include <algorithm>
 #include <celmath/mathlib.h>
 #include <celutil/debug.h>
 #include <celutil/gettext.h>
-#include <algorithm>
+#include "astro.h"
+#include "meshmanager.h"
+#include "nebula.h"
+#include "rendcontext.h"
+#include "render.h"
+#include "vecgl.h"
 
 using namespace Eigen;
 using namespace std;
 using namespace celmath;
+using namespace celestia;
 
 
 const char* Nebula::getType() const
@@ -82,11 +82,12 @@ bool Nebula::load(AssociativeArray* params, const fs::path& resPath)
 }
 
 
-void Nebula::render(const Vector3f& /*unused*/,
+void Nebula::render(const Vector3f& /*offset*/,
                     const Quaternionf& /*unused*/,
                     float /*unused*/,
                     float pixelSize,
-                    const Renderer* renderer)
+                    const Matrices& m,
+                    Renderer* renderer)
 {
     Geometry* g = nullptr;
     if (geometry != InvalidResource)
@@ -94,17 +95,19 @@ void Nebula::render(const Vector3f& /*unused*/,
     if (g == nullptr)
         return;
 
-    glDisable(GL_BLEND);
+    renderer->disableBlending();
 
-    glScalef(getRadius(), getRadius(), getRadius());
-    glRotate(getOrientation());
+    Matrix4f mv = vecgl::rotate(vecgl::scale(*m.modelview, getRadius()),
+                                getOrientation());
 
     GLSLUnlit_RenderContext rc(renderer, getRadius());
     rc.setPointScale(2.0f * getRadius() / pixelSize);
+    rc.setProjectionMatrix(m.projection);
+    rc.setModelViewMatrix(&mv);
     g->render(rc);
     glUseProgram(0);
 
-    glEnable(GL_BLEND);
+    renderer->enableBlending();
 }
 
 

@@ -27,7 +27,8 @@ void renderEllipsoid_GLSL(const RenderInfo& ri,
                        uint64_t renderFlags,
                        const Eigen::Quaternionf& planetOrientation,
                        const celmath::Frustum& frustum,
-                       const Renderer* renderer);
+                       const Matrices &m,
+                       Renderer* renderer);
 
 void renderGeometry_GLSL(Geometry* geometry,
                          const RenderInfo& ri,
@@ -38,7 +39,8 @@ void renderGeometry_GLSL(Geometry* geometry,
                          uint64_t renderFlags,
                          const Eigen::Quaternionf& planetOrientation,
                          double tsec,
-                         const Renderer* renderer);
+                         const Matrices &m,
+                         Renderer* renderer);
 
 void renderClouds_GLSL(const RenderInfo& ri,
                        const LightingState& ls,
@@ -51,7 +53,8 @@ void renderClouds_GLSL(const RenderInfo& ri,
                        uint64_t renderFlags,
                        const Eigen::Quaternionf& planetOrientation,
                        const celmath::Frustum& frustum,
-                       const Renderer* renderer);
+                       const Matrices &m,
+                       Renderer* renderer);
 
 void renderAtmosphere_GLSL(const RenderInfo& ri,
                            const LightingState& ls,
@@ -59,7 +62,8 @@ void renderAtmosphere_GLSL(const RenderInfo& ri,
                            float radius,
                            const Eigen::Quaternionf& planetOrientation,
                            const celmath::Frustum& frustum,
-                           const Renderer* renderer);
+                           const Matrices &m,
+                           Renderer* renderer);
 
 void renderRings_GLSL(RingSystem& rings,
                       RenderInfo& ri,
@@ -69,7 +73,8 @@ void renderRings_GLSL(RingSystem& rings,
                       unsigned int textureResolution,
                       bool renderShadow,
                       float segmentSizeInPixels,
-                      const Renderer* renderer);
+                      const Matrices &m,
+                      Renderer* renderer);
 
 void renderGeometry_GLSL_Unlit(Geometry* geometry,
                                const RenderInfo& ri,
@@ -78,6 +83,7 @@ void renderGeometry_GLSL_Unlit(Geometry* geometry,
                                uint64_t renderFlags,
                                const Eigen::Quaternionf& planetOrientation,
                                double tsec,
-                               const Renderer* renderer);
+                               const Matrices &m,
+                               Renderer* renderer);
 
 #endif // _CELENGINE_RENDERGLSL_H_

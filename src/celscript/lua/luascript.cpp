@@ -12,7 +12,6 @@
 #include <fstream>
 #include <fmt/printf.h>
 #include <celcompat/filesystem.h>
-#include <celcompat/memory.h>
 #include <celephem/scriptobject.h>
 #include <celestia/configfile.h>
 #include <celestia/celestiacore.h>
@@ -29,7 +28,7 @@ namespace scripts
 
 LuaScript::LuaScript(CelestiaCore *appcore) :
     m_appCore(appcore),
-    m_celxScript(make_unique<LuaState>())
+    m_celxScript(new LuaState)
 {
     m_celxScript->init(m_appCore);
 }
@@ -89,7 +88,7 @@ unique_ptr<IScript> LuaScriptPlugin::loadScript(const fs::path &path)
         return nullptr;
     }
 
-    auto script = make_unique<LuaScript>(appCore());
+    auto script = unique_ptr<LuaScript>(new LuaScript(appCore()));
     string errMsg;
     if (!script->load(scriptfile, path, errMsg))
     {
@@ -165,7 +164,8 @@ static string lua_path(const CelestiaConfig *config)
         if (dir.empty())
             continue;
 
-        if (!is_directory(dir))
+        std::error_code ec;
+        if (!fs::is_directory(dir, ec))
         {
             fmt::fprintf(cerr, "Path %s doesn't exist or isn't a directory", dir);
             continue;
@@ -237,7 +237,7 @@ bool CreateLuaEnvironment(CelestiaCore *appCore, const CelestiaConfig *config, P
 
         if (luaHook != nullptr)
         {
-            auto lh = make_unique<LuaHook>(appCore);
+            auto lh = unique_ptr<LuaHook>(new LuaHook(appCore));
             lh->m_state = unique_ptr<LuaState>(luaHook);
             appCore->setScriptHook(std::move(lh));
 

@@ -8,20 +8,20 @@
 // as published by the Free Software Foundation; either version 2
 // of the License, or (at your option) any later version.
 
+#include <vector>
 #include <celmath/frustum.h>
 #include <celmath/mathlib.h>
 #include <celutil/util.h>
-#include "glsupport.h"
-#include <vector>
-#include "render.h"
-#include "vertexobject.h"
 #include "marker.h"
+#include "render.h"
 #include "vecgl.h"
+#include "vertexobject.h"
 
 
 using namespace std;
 using namespace celgl;
 using namespace celmath;
+using namespace celestia;
 using namespace Eigen;
 
 
@@ -216,7 +216,10 @@ static void initVO(VertexObject& vo)
     vo.setVertices(2, GL_FLOAT, false, 0, 0);
 }
 
-void Renderer::renderMarker(MarkerRepresentation::Symbol symbol, float size, const Color& color)
+void Renderer::renderMarker(MarkerRepresentation::Symbol symbol,
+                            float size,
+                            const Color &color,
+                            const Matrices &m)
 {
     assert(shaderManager != nullptr);
     ShaderProperties shadprop;
@@ -231,10 +234,11 @@ void Renderer::renderMarker(MarkerRepresentation::Symbol symbol, float size, con
     if (!markerVO.initialized())
         initVO(markerVO);
 
-    float s = size / 2.0f;
-    prog->use();
     glVertexAttrib(CelestiaGLProgram::ColorAttributeIndex, color);
-    glScalef(s, s, 0);
+
+    prog->use();
+    float s = size / 2.0f;
+    prog->MVPMatrix = (*m.projection) * (*m.modelview) * vecgl::scale(Vector3f(s, s, 0));
 
     switch (symbol)
     {
@@ -322,7 +326,7 @@ void Renderer::renderSelectionPointer(const Observer& observer,
     if (prog == nullptr)
         return;
 
-    Matrix3f cameraMatrix = observer.getOrientationf().conjugate().toRotationMatrix();
+    Matrix3f cameraMatrix = getCameraOrientation().conjugate().toRotationMatrix();
     const Vector3f u = cameraMatrix.col(0);
     const Vector3f v = cameraMatrix.col(1);
     double distance = position.norm();
@@ -331,9 +335,9 @@ void Renderer::renderSelectionPointer(const Observer& observer,
 #ifdef USE_HDR
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 #endif
-    glDisable(GL_DEPTH_TEST);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    disableDepthTest();
+    enableBlending();
+    setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     float vfov = (float) observer.getFOV();
     float h = tan(vfov / 2);
@@ -352,15 +356,14 @@ void Renderer::renderSelectionPointer(const Observer& observer,
     x0 *= t;
     y0 *= t;
 
-    const Vector3f &center = cameraMatrix.col(2);
-    glPushMatrix();
-    glTranslatef(-center.x(), -center.y(), -center.z());
-
     auto &markerVO = getVertexObject(VOType::Marker, GL_ARRAY_BUFFER, 0, GL_STATIC_DRAW);
     markerVO.bind();
     if (!markerVO.initialized())
         initVO(markerVO);
+
     prog->use();
+    const Vector3f &center = cameraMatrix.col(2);
+    prog->mat4Param("MVPMatrix") = getProjectionMatrix() * getModelViewMatrix() * vecgl::translate(Vector3f(-center));
     prog->vec4Param("color") = Color(SelectionCursorColor, 0.6f).toVector4();
     prog->floatParam("pixelSize") = pixelSize;
     prog->floatParam("s") = s;
@@ -373,8 +376,6 @@ void Renderer::renderSelectionPointer(const Observer& observer,
 
     glUseProgram(0);
     markerVO.unbind();
-
-    glPopMatrix();
 
 #ifdef USE_HDR
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -400,6 +401,7 @@ void Renderer::renderEclipticLine()
         initVO(markerVO);
 
     prog->use();
+    prog->mat4Param("MVPMatrix") = getProjectionMatrix() * getModelViewMatrix();
     prog->vec4Param("color") = EclipticColor.toVector4();
     markerVO.draw(GL_LINE_LOOP, EclipticCount, EclipticOffset);
 
@@ -407,7 +409,10 @@ void Renderer::renderEclipticLine()
     markerVO.unbind();
 }
 
-void Renderer::renderCrosshair(float selectionSizeInPixels, double tsec, const Color &color)
+void Renderer::renderCrosshair(float selectionSizeInPixels,
+                               double tsec,
+                               const Color &color,
+                               const Matrices &m)
 {
     assert(shaderManager != nullptr);
     auto* prog = shaderManager->getShader("crosshair");
@@ -432,6 +437,7 @@ void Renderer::renderCrosshair(float selectionSizeInPixels, double tsec, const C
     float cursorGrow = max(1.0f, min(2.5f, (selectionSizeInPixels - 10.0f) / 100.0f));
 
     prog->use();
+    prog->mat4Param("MVPMatrix") = (*m.projection) * (*m.modelview);
     prog->vec4Param("color") = color.toVector4();
     prog->floatParam("radius") = cursorRadius;
     prog->floatParam("width") = minCursorWidth * cursorGrow;

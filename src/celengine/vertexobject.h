@@ -54,6 +54,15 @@ class VertexObject
     void setStreamType(GLenum streamType) noexcept     { m_streamType = streamType; }
 
  private:
+    inline bool isVAOSupported() const
+    {
+#ifndef GL_ES
+        return celestia::gl::ARB_vertex_array_object;
+#else
+        return celestia::gl::OES_vertex_array_object;
+#endif
+    }
+
     enum State : uint16_t
     {
         NormalState = 0x0000,
@@ -82,4 +91,4 @@ class VertexObject
     GLenum     m_streamType{ 0 };
     std::map<GLint, PtrParams>* m_attribParams{ nullptr };
 };
-}; // namespace
+} // namespace

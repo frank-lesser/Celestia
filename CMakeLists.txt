@@ -2,10 +2,28 @@ cmake_minimum_required(VERSION 3.1.0)
 
 option(LEGACY_OPENGL_LIBS "Use legacy OpenGL libraries instead of glvnd library (Default: off)" OFF)
 
+# Honor link flags in try_compile()
+if (POLICY CMP0056)
+  cmake_policy(SET CMP0056 NEW)
+endif()
+
+# only use the additional link flags when linking executables if the
+# ENABLE_EXPORTS target property is set to True
+if(POLICY CMP0065)
+  cmake_policy(SET CMP0065 NEW)
+endif()
+
+# Honor language standard (CMAKE_CXX_STANDARD) in try_compile()
+if(POLICY CMP0067)
+  cmake_policy(SET CMP0067 NEW)
+endif()
+
+# Ignore generated source files in AUTOMOC and AUTOUIC
 if(POLICY CMP0071)
   cmake_policy(SET CMP0071 OLD)
 endif()
 
+# Prefer GLVND or "legacy" OpenGL library (libOpenGL.so vs libGL.so)
 if(POLICY CMP0072)
   if(LEGACY_OPENGL_LIBS)
     cmake_policy(SET CMP0072 OLD)
@@ -36,9 +54,13 @@ option(ENABLE_THEORA  "Support video capture to OGG Theora? (Default: on)" ON)
 option(ENABLE_TOOLS   "Build different tools? (Default: off)" OFF)
 option(NATIVE_OSX_APP "Support native OSX paths read data from (Default: off)" OFF)
 option(FAST_MATH      "Build with unsafe fast-math compiller option (Default: off)" OFF)
-option(ENABLE_TTF     "Use TrueType fonts instead of TXF (Default: off)" OFF)
 option(ENABLE_TESTS   "Enable unit tests? (Default: off)" OFF)
 option(ENABLE_DATA    "Install data from content submodule? (Default: on)" ON)
+option(ENABLE_GLES    "Build for OpenGL ES 2.0 instead of OpenGL 2.1 (Default: off)" OFF)
+
+if(ENABLE_GLES)
+  add_definitions(-DGL_ES)
+endif()
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type." FORCE)
@@ -85,7 +107,9 @@ if(MSVC)
   # C4800: forcing value to bool
   # Additional options
   # bigobj: generate more object sections than allowed by default
-  add_compile_options("/wd4244" "/wd4267" "/wd4503" "/wd4800" "/bigobj")
+  # Promoted to errors
+  # C4316: object allocated on the heap may not be aligned 16
+  add_compile_options("/wd4244" "/wd4267" "/wd4503" "/wd4800" "/bigobj" "/we4316")
 endif()
 
 if(NOT WIN32)
@@ -177,9 +201,11 @@ if(WIN32)
   link_libraries("vfw32" "comctl32" "winmm")
 endif()
 
-find_package(OpenGL REQUIRED)
-include_directories(${OPENGL_INCLUDE_DIRS})
-link_libraries(${OPENGL_LIBRARIES})
+if(NOT ENABLE_GLES)
+  find_package(OpenGL REQUIRED)
+  include_directories(${OPENGL_INCLUDE_DIRS})
+  link_libraries(${OPENGL_LIBRARIES})
+endif()
 
 find_package(Libepoxy REQUIRED)
 link_libraries(libepoxy::libepoxy)
@@ -224,12 +250,8 @@ else()
   message(STATUS "CELX is disabled. Not looking for LUA libraries.")
 endif()
 
-if(ENABLE_TTF)
-  find_package(Freetype REQUIRED)
-  link_libraries(Freetype::Freetype)
-else()
-  add_definitions(-DNO_TTF=1)
-endif()
+find_package(Freetype REQUIRED)
+link_libraries(Freetype::Freetype)
 
 #[[
 get_cmake_property(_variableNames VARIABLES)
@@ -339,23 +361,31 @@ check_include_files(byteswap.h HAVE_BYTESWAP_H)
 check_include_file_cxx(experimental/filesystem HAVE_EXPERIMENTAL_FILESYSTEM)
 
 if(HAVE_EXPERIMENTAL_FILESYSTEM)
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    find_library(CLANG_FS_LIBRARY "c++fs")
-    if(CLANG_FS_LIBRARY)
-      set(FS_LIBRARY c++fs)
-    else()
+  # Try compile without linking against any library
+  try_compile(CXXFSLIB ${CMAKE_BINARY_DIR} "${CMAKE_SOURCE_DIR}/checks/cxxfs.cpp")
+
+  if(CXXFSLIB)
+    # Nothing to do, linking is not explicitly required
+  else()
+    # Find the filesystem lib we need to link against
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+      find_library(CLANG_FS_LIBRARY "c++fs")
+      if(CLANG_FS_LIBRARY)
+        set(FS_LIBRARY c++fs)
+      else()
+        set(FS_LIBRARY stdc++fs)
+      endif()
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
       set(FS_LIBRARY stdc++fs)
     endif()
-  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    set(FS_LIBRARY stdc++fs)
-  endif()
 
-  try_compile(CXXFSLIB ${CMAKE_BINARY_DIR} "${CMAKE_SOURCE_DIR}/checks/cxxfs.cpp" LINK_LIBRARIES "${FS_LIBRARY}")
-  if(CXXFSLIB)
-    link_libraries("${FS_LIBRARY}")
-  else()
-    set(HAVE_EXPERIMENTAL_FILESYSTEM OFF)
-    message(WARNING "C++ experimental filesystem library is unusable!\nWill use own implementation.")
+    try_compile(CXXFSLIB ${CMAKE_BINARY_DIR} "${CMAKE_SOURCE_DIR}/checks/cxxfs.cpp" LINK_LIBRARIES "${FS_LIBRARY}")
+    if(CXXFSLIB)
+      link_libraries("${FS_LIBRARY}")
+    else()
+      set(HAVE_EXPERIMENTAL_FILESYSTEM OFF)
+      message(WARNING "C++ experimental filesystem library is unusable!\nWill use own implementation.")
+    endif()
   endif()
 endif()
 

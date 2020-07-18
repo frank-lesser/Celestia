@@ -40,6 +40,12 @@ class FramebufferObject;
 namespace celmath
 {
 class Frustum;
+}
+
+struct Matrices
+{
+    Eigen::Matrix4f *projection;
+    Eigen::Matrix4f *modelview;
 };
 
 struct LightSource
@@ -69,6 +75,11 @@ enum class VOType
     Count      = 4
 };
 
+enum class RenderMode
+{
+    Fill = 0,
+    Line = 1
+};
 
 class Renderer
 {
@@ -102,7 +113,7 @@ class Renderer
     void setFaintestAM45deg(float);
     float getFaintestAM45deg() const;
 
-    void setRenderMode(int);
+    void setRenderMode(RenderMode);
     void autoMag(float& faintestMag);
     void render(const Observer&,
                 const Universe&,
@@ -212,7 +223,9 @@ class Renderer
     enum class PixelFormat
     {
         RGB = GL_RGB,
+#ifndef GL_ES
         BGR_EXT = GL_BGR_EXT
+#endif
     };
 
     uint64_t getRenderFlags() const;
@@ -239,10 +252,22 @@ class Renderer
     void setViewport(const std::array<int, 4>& viewport) const;
     void setScissor(int x, int y, int w, int h);
     void removeScissor();
-    void enableMSAA();
-    void disableMSAA();
-    bool isMSAAEnabled() const;
-    void drawRectangle(const Rect& r);
+
+    void enableMSAA() noexcept;
+    void disableMSAA() noexcept;
+    bool isMSAAEnabled() const noexcept;
+
+    void enableBlending() noexcept;
+    void disableBlending() noexcept;
+    void setBlendingFactors(GLenum, GLenum) noexcept;
+
+    void enableDepthMask() noexcept;
+    void disableDepthMask() noexcept;
+
+    void enableDepthTest() noexcept;
+    void disableDepthTest() noexcept;
+
+    void drawRectangle(const Rect& r, const Eigen::Matrix4f& mvp);
     void setRenderRegion(int x, int y, int width, int height, bool withScissor = true);
 
     const ColorTemperatureTable* getStarColorTable() const;
@@ -254,7 +279,43 @@ class Renderer
 
     bool captureFrame(int, int, int, int, PixelFormat format, unsigned char*, bool = false) const;
 
-    void renderMarker(MarkerRepresentation::Symbol symbol, float size, const Color& color);
+    void renderMarker(MarkerRepresentation::Symbol symbol,
+                      float size,
+                      const Color &color,
+                      const Matrices &m);
+
+    const Eigen::Matrix4f& getModelViewMatrix() const
+    {
+        return m_modelMatrix;
+    }
+    const Eigen::Matrix4f& getProjectionMatrix() const
+    {
+        return m_projMatrix;
+    }
+    const Eigen::Matrix4f& getOrthoProjectionMatrix() const
+    {
+        return m_orthoProjMatrix;
+    }
+
+    const Eigen::Matrix4f& getCurrentModelViewMatrix() const
+    {
+        return *m_modelViewPtr;
+    }
+
+    void setCurrentModelViewMatrix(const Eigen::Matrix4f& m)
+    {
+        m_modelViewPtr = &m;
+    }
+
+    const Eigen::Matrix4f& getCurrentProjectionMatrix() const
+    {
+        return *m_projectionPtr;
+    }
+
+    void setCurrentProjectionMatrix(const Eigen::Matrix4f& m)
+    {
+        m_projectionPtr = &m;
+    }
 
 #ifdef USE_HDR
     bool getBloomEnabled();
@@ -466,10 +527,10 @@ class Renderer
                                 const celmath::Frustum& viewFrustum,
                                 const Selection& sel);
 
-    void renderAsterisms(const Universe&, float);
-    void renderBoundaries(const Universe&, float);
+    void renderAsterisms(const Universe&, float, const Eigen::Matrix4f&);
+    void renderBoundaries(const Universe&, float, const Eigen::Matrix4f&);
     void renderEclipticLine();
-    void renderCrosshair(float size, double tsec, const Color &color);
+    void renderCrosshair(float size, double tsec, const Color &color, const Matrices &m);
 
     void buildNearSystemsLists(const Universe &universe,
                                const Observer &observer,
@@ -509,41 +570,47 @@ class Renderer
                       float nearPlaneDistance,
                       float farPlaneDistance,
                       RenderProperties& obj,
-                      const LightingState&);
+                      const LightingState&,
+                      const Matrices&);
 
     void renderPlanet(Body& body,
                       const Eigen::Vector3f& pos,
                       float distance,
                       float appMag,
                       const Observer& observer,
-                      float, float);
+                      float, float,
+                      const Matrices&);
 
     void renderStar(const Star& star,
                     const Eigen::Vector3f& pos,
                     float distance,
                     float appMag,
                     double now,
-                    float, float);
+                    float, float,
+                    const Matrices&);
 
     void renderReferenceMark(const ReferenceMark& refMark,
                              const Eigen::Vector3f& pos,
                              float distance,
                              double now,
-                             float nearPlaneDistance);
+                             float nearPlaneDistance,
+                             const Matrices&);
 
     void renderCometTail(const Body& body,
                          const Eigen::Vector3f& pos,
                          const Observer& observer,
-                         float discSizeInPixels);
+                         float discSizeInPixels,
+                         const Matrices&);
 
     void renderObjectAsPoint(const Eigen::Vector3f& center,
                              float radius,
                              float appMag,
                              float _faintestMag,
                              float discSizeInPixels,
-                             Color color,
+                             const Color& color,
                              bool useHalos,
-                             bool emissive);
+                             bool emissive,
+                             const Matrices&);
 
     void renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
                                    const Eigen::Vector3f& center,
@@ -552,7 +619,8 @@ class Renderer
                                    const Eigen::Vector3f& sunDirection,
                                    const LightingState& ls,
                                    float fade,
-                                   bool lit);
+                                   bool lit,
+                                   const Matrices&);
 
     void locationsToAnnotations(const Body& body,
                                 const Eigen::Vector3d& bodyPosition,
@@ -562,7 +630,8 @@ class Renderer
     void renderItem(const RenderListEntry& rle,
                     const Observer& observer,
                     float nearPlaneDistance,
-                    float farPlaneDistance);
+                    float farPlaneDistance,
+                    const Matrices&);
 
     bool testEclipse(const Body& receiver,
                      const Body& caster,
@@ -586,24 +655,27 @@ class Renderer
                        bool special = false);
     void renderAnnotationMarker(const Annotation &a,
                                 FontStyle fs,
-                                float depth);
+                                float depth,
+                                const Matrices&);
     void renderAnnotationLabel(const Annotation &a,
                                FontStyle fs,
                                int hOffset,
                                int vOffset,
-                               float depth);
-    void renderAnnotations(const std::vector<Annotation>&, FontStyle fs);
+                               float depth,
+                               const Matrices&);
+    void renderAnnotations(const std::vector<Annotation>&,
+                           FontStyle fs);
     void renderBackgroundAnnotations(FontStyle fs);
     void renderForegroundAnnotations(FontStyle fs);
     std::vector<Annotation>::iterator renderSortedAnnotations(std::vector<Annotation>::iterator,
                                                               float nearDist,
                                                               float farDist,
                                                               FontStyle fs);
-    std::vector<Renderer::Annotation>::iterator renderAnnotations(std::vector<Annotation>::iterator startIter,
-                                                                  std::vector<Annotation>::iterator endIter,
-                                                                  float nearDist,
-                                                                  float farDist,
-                                                                  FontStyle fs);
+    std::vector<Annotation>::iterator renderAnnotations(std::vector<Annotation>::iterator startIter,
+                                                        std::vector<Annotation>::iterator endIter,
+                                                        float nearDist,
+                                                        float farDist,
+                                                        FontStyle fs);
 
     void markersToAnnotations(const MarkerList &markers,
                               const Observer &observer,
@@ -623,7 +695,8 @@ class Renderer
                      const Eigen::Quaterniond& cameraOrientation,
                      const celmath::Frustum& frustum,
                      float nearDist,
-                     float farDist);
+                     float farDist,
+                     const Matrices&);
 
     void renderSolarSystemObjects(const Observer &observer,
                                   int nIntervals,
@@ -633,8 +706,8 @@ class Renderer
 
     void createShadowFBO();
 
-    void enableSmoothLines() const;
-    void disableSmoothLines() const;
+    void enableSmoothLines();
+    void disableSmoothLines();
 
 #ifdef USE_HDR
  private:
@@ -723,6 +796,8 @@ class Renderer
     Eigen::Matrix4f m_projMatrix;
     Eigen::Matrix4f m_MVPMatrix;
     Eigen::Matrix4f m_orthoProjMatrix;
+    const Eigen::Matrix4f *m_modelViewPtr  { &m_modelMatrix };
+    const Eigen::Matrix4f *m_projectionPtr { &m_projMatrix };
 
     bool useCompressedTextures{ false };
     unsigned int textureResolution;
@@ -731,13 +806,18 @@ class Renderer
     uint32_t frameCount;
 
     int currentIntervalIndex{ 0 };
-    enum GLStateFlags
-    {
-        ScissorTest     = 0x0001,
-        Multisaple      = 0x0002,
-    };
 
-    int m_GLStateFlag { 0 };
+    struct State
+    {
+        bool blending    : 1;
+        bool scissor     : 1;
+        bool multisample : 1;
+        bool depthMask   : 1;
+        bool depthTest   : 1;
+
+        GLenum sfactor, dfactor; // blending
+    };
+    State m_GLState { false, false, false, false, false };
 
  private:
     typedef std::map<const Orbit*, CurvePlot*> OrbitCache;

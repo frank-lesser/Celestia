@@ -22,8 +22,8 @@ VertexObject::VertexObject(GLenum bufferType) :
 }
 
 VertexObject::VertexObject(GLenum bufferType, GLsizeiptr bufferSize, GLenum streamType) :
-    m_bufferType(bufferType),
     m_bufferSize(bufferSize),
+    m_bufferType(bufferType),
     m_streamType(streamType)
 {
 }
@@ -32,7 +32,7 @@ VertexObject::~VertexObject()
 {
     delete m_attribParams;
 
-    if (m_vaoId != 0 && gl::ARB_vertex_array_object)
+    if (m_vaoId != 0 && isVAOSupported())
         glDeleteVertexArrays(1, &m_vaoId);
 
     if (m_vboId != 0)
@@ -43,7 +43,7 @@ void VertexObject::bind() noexcept
 {
     if ((m_state & State::Initialize) != 0)
     {
-        if (gl::ARB_vertex_array_object)
+        if (isVAOSupported())
         {
             glGenVertexArrays(1, &m_vaoId);
             glBindVertexArray(m_vaoId);
@@ -53,7 +53,7 @@ void VertexObject::bind() noexcept
     }
     else
     {
-        if (gl::ARB_vertex_array_object)
+        if (isVAOSupported())
         {
             glBindVertexArray(m_vaoId);
             if ((m_state & State::Update) != 0)
@@ -75,7 +75,7 @@ void VertexObject::bindWritable() noexcept
 
 void VertexObject::unbind() noexcept
 {
-    if (gl::ARB_vertex_array_object)
+    if (isVAOSupported())
     {
         if ((m_state & (State::Initialize | State::Update)) != 0)
             glBindBuffer(m_bufferType, 0);
@@ -191,4 +191,4 @@ void VertexObject::setVertexAttribArray(GLint location, GLint count, GLenum type
     PtrParams p = { offset, stride, count, type, normalized };
     (*m_attribParams)[location] = p;
 }
-}; // namespace
+} // namespace

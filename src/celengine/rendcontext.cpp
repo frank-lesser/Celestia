@@ -9,21 +9,17 @@
 // of the License, or (at your option) any later version.
 
 #include <vector>
-#include "rendcontext.h"
-#include "texmanager.h"
-#include "modelgeometry.h"
-#include "body.h"
-#include "glsupport.h"
 #include <celmath/geomutil.h>
+#include "body.h"
+#include "modelgeometry.h"
+#include "rendcontext.h"
 #include "render.h"
+#include "shadowmap.h"
+#include "texmanager.h"
 
 using namespace cmod;
 using namespace Eigen;
 using namespace std;
-
-#ifndef GL_ONLY_SHADOWS
-#define GL_ONLY_SHADOWS 1
-#endif
 
 static Material defaultMaterial;
 
@@ -74,7 +70,7 @@ GetTextureHandle(Material::TextureResource* texResource)
 }
 
 
-RenderContext::RenderContext(const Renderer* _renderer) :
+RenderContext::RenderContext(Renderer* _renderer) :
     material(&defaultMaterial),
     renderer(_renderer)
 {
@@ -168,21 +164,24 @@ RenderContext::drawGroup(const Mesh::PrimitiveGroup& group)
 
     if (group.prim == Mesh::SpriteList)
     {
+#ifndef GL_ES
         glEnable(GL_POINT_SPRITE);
-        glActiveTexture(GL_TEXTURE0);
         glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
+#endif
+        glActiveTexture(GL_TEXTURE0);
     }
 
     glDrawElements(GLPrimitiveModes[(int) group.prim],
                    group.nIndices,
                    GL_UNSIGNED_INT,
                    group.indices);
-
+#ifndef GL_ES
     if (group.prim == Mesh::SpriteList)
     {
         glDisable(GL_POINT_SPRITE);
         glDisable(GL_VERTEX_PROGRAM_POINT_SIZE);
     }
+#endif
 }
 
 
@@ -216,6 +215,17 @@ RenderContext::setVertexArrays(const Mesh::VertexDescription& desc,
     }
 }
 
+void
+RenderContext::setProjectionMatrix(const Eigen::Matrix4f *m)
+{
+    projectionMatrix = m;
+}
+
+void
+RenderContext::setModelViewMatrix(const Eigen::Matrix4f *m)
+{
+    modelViewMatrix = m;
+}
 
 void
 setStandardVertexArrays(const Mesh::VertexDescription& desc,
@@ -337,7 +347,7 @@ setExtendedVertexArrays(const Mesh::VertexDescription& desc,
 
 /***** GLSL render context ******/
 
-GLSL_RenderContext::GLSL_RenderContext(const Renderer* renderer,
+GLSL_RenderContext::GLSL_RenderContext(Renderer* renderer,
                                        const LightingState& ls,
                                        float _objRadius,
                                        const Quaternionf& orientation) :
@@ -351,7 +361,7 @@ GLSL_RenderContext::GLSL_RenderContext(const Renderer* renderer,
 }
 
 
-GLSL_RenderContext::GLSL_RenderContext(const Renderer* renderer,
+GLSL_RenderContext::GLSL_RenderContext(Renderer* renderer,
                                        const LightingState& ls,
                                        const Eigen::Vector3f& _objScale,
                                        const Quaternionf& orientation) :
@@ -500,8 +510,13 @@ GLSL_RenderContext::makeCurrent(const Material& m)
             // Tweak the texture--set clamp to border and a border color with
             // a zero alpha.
             float bc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+#ifndef GL_ES
             glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, bc);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+#else
+            glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR_OES, bc);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER_OES);
+#endif
             glActiveTexture(GL_TEXTURE0);
 
             shaderProps.texUsage |= ShaderProperties::RingShadowTexture;
@@ -543,6 +558,7 @@ GLSL_RenderContext::makeCurrent(const Material& m)
         return;
 
     prog->use();
+    prog->MVPMatrix = (*projectionMatrix) * (*modelViewMatrix);
 
     for (unsigned int i = 0; i < nTextures; i++)
     {
@@ -637,23 +653,32 @@ GLSL_RenderContext::makeCurrent(const Material& m)
         switch (blendMode)
         {
         case Material::NormalBlend:
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthMask(disableDepthWriteOnBlend ? GL_FALSE : GL_TRUE);
+            renderer->enableBlending();
+            renderer->setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            if (disableDepthWriteOnBlend)
+                renderer->disableDepthMask();
+            else
+                renderer->enableDepthMask();
             break;
         case Material::AdditiveBlend:
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-            glDepthMask(disableDepthWriteOnBlend ? GL_FALSE : GL_TRUE);
+            renderer->enableBlending();
+            renderer->setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
+            if (disableDepthWriteOnBlend)
+                renderer->disableDepthMask();
+            else
+                renderer->enableDepthMask();
             break;
         case Material::PremultipliedAlphaBlend:
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthMask(disableDepthWriteOnBlend ? GL_FALSE : GL_TRUE);
+            renderer->enableBlending();
+            renderer->setBlendingFactors(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            if (disableDepthWriteOnBlend)
+                renderer->disableDepthMask();
+            else
+                renderer->enableDepthMask();
             break;
         default:
-            glDisable(GL_BLEND);
-            glDepthMask(GL_TRUE);
+            renderer->disableBlending();
+            renderer->enableDepthMask();
             break;
         }
     }
@@ -683,7 +708,7 @@ GLSL_RenderContext::setShadowMap(GLuint _shadowMap, GLuint _width, const Eigen::
 
 /***** GLSL-Unlit render context ******/
 
-GLSLUnlit_RenderContext::GLSLUnlit_RenderContext(const Renderer* renderer, float _objRadius) :
+GLSLUnlit_RenderContext::GLSLUnlit_RenderContext(Renderer* renderer, float _objRadius) :
     RenderContext(renderer),
     blendMode(Material::InvalidBlend),
     objRadius(_objRadius)
@@ -747,6 +772,9 @@ GLSLUnlit_RenderContext::makeCurrent(const Material& m)
         return;
 
     prog->use();
+    prog->MVPMatrix = (*projectionMatrix) * (*modelViewMatrix);
+    if (usePointSize)
+        prog->ModelViewMatrix = *modelViewMatrix;
 
     for (unsigned int i = 0; i < nTextures; i++)
     {
@@ -780,23 +808,23 @@ GLSLUnlit_RenderContext::makeCurrent(const Material& m)
         switch (blendMode)
         {
         case Material::NormalBlend:
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthMask(GL_FALSE);
+            renderer->enableBlending();
+            renderer->setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            renderer->disableDepthMask();
             break;
         case Material::AdditiveBlend:
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-            glDepthMask(GL_FALSE);
+            renderer->enableBlending();
+            renderer->setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
+            renderer->disableDepthMask();
             break;
         case Material::PremultipliedAlphaBlend:
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthMask(GL_FALSE);
+            renderer->enableBlending();
+            renderer->setBlendingFactors(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            renderer->disableDepthMask();
             break;
         default:
-            glDisable(GL_BLEND);
-            glDepthMask(GL_TRUE);
+            renderer->disableBlending();
+            renderer->enableDepthMask();
             break;
         }
     }

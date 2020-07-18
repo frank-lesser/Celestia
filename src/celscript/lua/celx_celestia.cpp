@@ -11,11 +11,7 @@
 
 #include <celutil/debug.h>
 #include <celutil/gettext.h>
-#if NO_TTF
-#include "celtxf/texturefont.h"
-#else
 #include "celttf/truetypefont.h"
-#endif
 #include <fmt/printf.h>
 #include <celengine/category.h>
 #include <celengine/texture.h>
@@ -2132,6 +2128,12 @@ static int celestia_loadfragment(lua_State* l)
     return 1;
 }
 
+static int celestia_version(lua_State* l)
+{
+    lua_pushstring(l, "1.7.0");
+    return 1;
+}
+
 void CreateCelestiaMetaTable(lua_State* l)
 {
     Celx_CreateClassMetatable(l, Celx_Celestia);
@@ -2235,6 +2237,8 @@ void CreateCelestiaMetaTable(lua_State* l)
     Celx_RegisterMethod(l, "play", celestia_play);
 
     Celx_RegisterMethod(l, "loadfragment", celestia_loadfragment);
+
+    Celx_RegisterMethod(l, "version", celestia_version);
 
     lua_pop(l, 1);
 }

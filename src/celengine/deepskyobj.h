@@ -25,6 +25,7 @@
 
 class Selection;
 class Renderer;
+struct Matrices;
 
 constexpr const float DSO_DEFAULT_ABS_MAGNITUDE = -1000.0f;
 
@@ -90,7 +91,8 @@ class DeepSkyObject : public AstroObject
                         const Eigen::Quaternionf& viewerOrientation,
                         float brightness,
                         float pixelSize,
-                        const Renderer*) = 0;
+                        const Matrices& m,
+                        Renderer*) = 0;
 
     virtual uint64_t getRenderMask() const { return 0; }
     virtual unsigned int getLabelMask() const { return 0; }

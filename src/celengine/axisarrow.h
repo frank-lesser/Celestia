@@ -29,13 +29,17 @@ class ArrowReferenceMark : public ReferenceMark
     void setSize(float _size);
     void setColor(Color _color);
 
-    void render(Renderer* renderer, const Eigen::Vector3f& position, float discSize, double tdb) const;
-    float boundingSphereRadius() const
+    void render(Renderer* renderer,
+                const Eigen::Vector3f& position,
+                float discSize,
+                double tdb,
+                const Matrices& m) const override;
+    float boundingSphereRadius() const override
     {
         return size;
     }
 
-    bool isOpaque() const
+    bool isOpaque() const override
     {
         return opacity == 1.0f;
     }
@@ -61,13 +65,17 @@ class AxesReferenceMark : public ReferenceMark
     void setSize(float _size);
     void setOpacity(float _opacity);
 
-    void render(Renderer* renderer, const Eigen::Vector3f& position, float discSize, double tdb) const;
-    float boundingSphereRadius() const
+    void render(Renderer* renderer,
+                const Eigen::Vector3f& position,
+                float discSize,
+                double tdb,
+                const Matrices& m) const override;
+    float boundingSphereRadius() const override
     {
         return size;
     }
 
-    bool isOpaque() const
+    bool isOpaque() const override
     {
         return opacity == 1.0f;
     }
@@ -138,6 +146,3 @@ private:
 };
 
 #endif // _CELENGINE_AXISARROW_H_
-
-
-

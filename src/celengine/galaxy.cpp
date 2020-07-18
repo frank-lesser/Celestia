@@ -9,7 +9,6 @@
 // of the License, or (at your option) any later version.
 
 #include "render.h"
-#include <config.h>
 #include "astro.h"
 #include "galaxy.h"
 #include "vecgl.h"
@@ -20,7 +19,6 @@
 #include <celutil/gettext.h>
 #include <celutil/debug.h>
 #include <celcompat/filesystem.h>
-#include <cstring>
 #include <fstream>
 #include <algorithm>
 #include <random>
@@ -29,6 +27,7 @@
 using namespace Eigen;
 using namespace std;
 using namespace celmath;
+using namespace celestia;
 
 static int width = 128, height = 128;
 static const unsigned int GALAXY_POINTS  = 3500;
@@ -106,7 +105,7 @@ static void GalaxyTextureEval(float u, float v, float /*w*/, unsigned char *pixe
     pixel[3] = pixVal;
 }
 
-static void ColorTextureEval(float u, float v, float /*w*/, unsigned char *pixel)
+static void ColorTextureEval(float u, float /*v*/, float /*w*/, unsigned char *pixel)
 {
     unsigned int i = (u*0.5f + 0.5f)*255.99f; // [-1, 1] -> [0, 255]
 
@@ -272,7 +271,8 @@ void Galaxy::render(const Vector3f& offset,
                     const Quaternionf& viewerOrientation,
                     float brightness,
                     float pixelSize,
-                    const Renderer* renderer)
+                    const Matrices& m,
+                    Renderer* renderer)
 {
     if (form == nullptr)
     {
@@ -280,13 +280,13 @@ void Galaxy::render(const Vector3f& offset,
     }
     else
     {
-        renderGalaxyPointSprites(offset, viewerOrientation, brightness, pixelSize, renderer);
+        renderGalaxyPointSprites(offset, viewerOrientation, brightness, pixelSize, m, renderer);
     }
 }
 
 struct GalaxyVertex
 {
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     Vector4f position;
     Matrix<GLshort, 4, 1> texCoord; // texCoord.x = x, texCoord.y = y, texCoord.z = color index, texCoord.w = alpha
@@ -311,7 +311,8 @@ void Galaxy::renderGalaxyPointSprites(const Vector3f& offset,
                                       const Quaternionf& viewerOrientation,
                                       float brightness,
                                       float pixelSize,
-                                      const Renderer* renderer)
+                                      const Matrices& ms,
+                                      Renderer* renderer)
 {
     if (form == nullptr)
         return;
@@ -346,7 +347,9 @@ void Galaxy::renderGalaxyPointSprites(const Vector3f& offset,
     if (colorTex == nullptr)
     {
         colorTex = CreateProceduralTexture(256, 1, GL_RGBA,
-                                           ColorTextureEval);
+                                           ColorTextureEval,
+                                           Texture::EdgeClamp,
+                                           Texture::NoMipMaps);
     }
     assert(colorTex != nullptr);
     glActiveTexture(GL_TEXTURE1);
@@ -394,8 +397,8 @@ void Galaxy::renderGalaxyPointSprites(const Vector3f& offset,
             brightness_corr = 0.45f;
     }
 
-    glPushMatrix();
-    glTranslatef(-offset.x(), -offset.y(), -offset.z());
+
+    Matrix4f mv = vecgl::translate(*ms.modelview, Vector3f(-offset));
 
     const float btot = ((type > SBc) && (type < Irr)) ? 2.5f : 5.0f;
     const float spriteScaleFactor = 1.0f / 1.55f;
@@ -411,6 +414,7 @@ void Galaxy::renderGalaxyPointSprites(const Vector3f& offset,
     GLushort j = 0;
 
     prog->use();
+    prog->mat4Param("MVPMatrix") = (*ms.projection) * mv;
     prog->samplerParam("galaxyTex") = 0;
     prog->samplerParam("colorTex") = 1;
 
@@ -468,7 +472,6 @@ void Galaxy::renderGalaxyPointSprites(const Vector3f& offset,
     glDisableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
     glDisableVertexAttribArray(CelestiaGLProgram::TextureCoord0AttributeIndex);
     glUseProgram(0);
-    glPopMatrix();
     glActiveTexture(GL_TEXTURE0);
 }
 

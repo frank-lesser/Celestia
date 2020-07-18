@@ -31,32 +31,25 @@
 #include <celmath/intersect.h>
 #include <celutil/utf8.h>
 #include <celutil/util.h>
+#include "shadowmap.h"
 
 using namespace cmod;
 using namespace Eigen;
 using namespace std;
 using namespace celmath;
-
-#ifndef GL_ONLY_SHADOWS
-#define GL_ONLY_SHADOWS 1
-#endif
+using namespace celestia;
 
 static
 void renderGeometryShadow_GLSL(Geometry* geometry,
                                FramebufferObject* shadowFbo,
-                               const RenderInfo& ri,
                                const LightingState& ls,
                                int lightIndex,
-                               float geometryScale,
-                               const Quaternionf& planetOrientation,
                                double tsec,
-                               const Renderer* renderer,
-                               Eigen::Matrix4f *lightMatrix);
+                               Renderer* renderer,
+                               Matrix4f *lightMatrix);
 
 static
 Matrix4f directionalLightMatrix(const Vector3f& lightDirection);
-static
-Matrix4f shadowProjectionMatrix(float objectRadius);
 
 // Render a planet sphere with GLSL shaders
 void renderEllipsoid_GLSL(const RenderInfo& ri,
@@ -68,7 +61,8 @@ void renderEllipsoid_GLSL(const RenderInfo& ri,
                        uint64_t renderFlags,
                        const Quaternionf& planetOrientation,
                        const Frustum& frustum,
-                       const Renderer* renderer)
+                       const Matrices &m,
+                       Renderer* renderer)
 {
     float radius = semiAxes.maxCoeff();
 
@@ -214,8 +208,13 @@ void renderEllipsoid_GLSL(const RenderInfo& ri,
             // Tweak the texture--set clamp to border and a border color with
             // a zero alpha.
             float bc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+#ifndef GL_ES
             glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, bc);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+#else
+            glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR_OES, bc);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER_OES);
+#endif
             glActiveTexture(GL_TEXTURE0);
 
             shadprop.texUsage |= ShaderProperties::RingShadowTexture;
@@ -238,6 +237,7 @@ void renderEllipsoid_GLSL(const RenderInfo& ri,
         return;
 
     prog->use();
+    prog->MVPMatrix = (*m.projection) * (*m.modelview);
 
 #ifdef USE_HDR
     prog->setLightParameters(ls, ri.color, ri.specularColor, Color::Black, ri.nightLightScale);
@@ -280,7 +280,7 @@ void renderEllipsoid_GLSL(const RenderInfo& ri,
         }
     }
 
-    if (shadprop.hasEclipseShadows() != 0)
+    if (shadprop.hasEclipseShadows())
         prog->setEclipseShadowParameters(ls, semiAxes, planetOrientation);
 
     unsigned int attributes = LODSphereMesh::Normals;
@@ -309,7 +309,8 @@ void renderGeometry_GLSL(Geometry* geometry,
                          uint64_t renderFlags,
                          const Quaternionf& planetOrientation,
                          double tsec,
-                         const Renderer* renderer)
+                         const Matrices &m,
+                         Renderer* renderer)
 {
     auto *shadowBuffer = renderer->getShadowFBO(0);
     Matrix4f lightMatrix(Matrix4f::Identity());
@@ -319,8 +320,6 @@ void renderGeometry_GLSL(Geometry* geometry,
         std::array<int, 4> viewport;
         renderer->getViewport(viewport);
 
-        // Save current GL state to avoid depth rendering bugs
-        glPushAttrib(GL_TRANSFORM_BIT);
         float range[2];
         glGetFloatv(GL_DEPTH_RANGE, range);
         glDepthRange(0.0f, 1.0f);
@@ -335,16 +334,14 @@ void renderGeometry_GLSL(Geometry* geometry,
         fmt::printf("bias: %f bits: %f clear: %f range: %f - %f, scale:%f\n", bias, bits, clear, range[0], range[1], scale);
 #endif
 
-        renderGeometryShadow_GLSL(geometry, shadowBuffer,
-                                  ri, ls, 0, geometryScale,
-                                  planetOrientation,
+        renderGeometryShadow_GLSL(geometry, shadowBuffer, ls, 0,
                                   tsec, renderer, &lightMatrix);
         renderer->setViewport(viewport);
 #ifdef DEPTH_BUFFER_DEBUG
-        glDisable(GL_DEPTH_TEST);
+        renderer->disableDepthTest();
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
-        glLoadMatrix(Ortho2D(0.0f, (float)viewport[2], 0.0f, (float)viewport[3]));
+        glLoadMatrixf(Ortho2D(0.0f, (float)viewport[2], 0.0f, (float)viewport[3]).data());
         glMatrixMode(GL_MODELVIEW);
         glPushMatrix();
         glLoadIdentity();
@@ -376,13 +373,14 @@ void renderGeometry_GLSL(Geometry* geometry,
         glPopMatrix();
         glBindTexture(GL_TEXTURE_2D, 0);
         glDisable(GL_TEXTURE_2D);
-        glEnable(GL_DEPTH_TEST);
+        renderer->enableDepthTest();
 #endif
-        glPopAttrib();
         glDepthRange(range[0], range[1]);
     }
 
     GLSL_RenderContext rc(renderer, ls, geometryScale, planetOrientation);
+    rc.setModelViewMatrix(m.modelview);
+    rc.setProjectionMatrix(m.projection);
 
     if ((renderFlags & Renderer::ShowAtmospheres) != 0)
     {
@@ -436,10 +434,13 @@ void renderGeometry_GLSL_Unlit(Geometry* geometry,
                                uint64_t /* renderFlags */,
                                const Quaternionf& /* planetOrientation */,
                                double tsec,
-                               const Renderer* renderer)
+                               const Matrices &m,
+                               Renderer* renderer)
 {
     GLSLUnlit_RenderContext rc(renderer, geometryScale);
 
+    rc.setModelViewMatrix(m.modelview);
+    rc.setProjectionMatrix(m.projection);
     rc.setPointScale(ri.pointScale);
 
     // Handle material override; a texture specified in an ssc file will
@@ -479,7 +480,8 @@ void renderClouds_GLSL(const RenderInfo& ri,
                        uint64_t renderFlags,
                        const Quaternionf& planetOrientation,
                        const Frustum& frustum,
-                       const Renderer* renderer)
+                       const Matrices &m,
+                       Renderer* renderer)
 {
     float radius = semiAxes.maxCoeff();
 
@@ -559,6 +561,7 @@ void renderClouds_GLSL(const RenderInfo& ri,
         return;
 
     prog->use();
+    prog->MVPMatrix = (*m.projection) * (*m.modelview);
 
     prog->setLightParameters(ls, ri.color, ri.specularColor, Color::Black);
     prog->eyePosition = ls.eyePos_obj;
@@ -608,7 +611,8 @@ renderAtmosphere_GLSL(const RenderInfo& ri,
                       float radius,
                       const Quaternionf& /*planetOrientation*/,
                       const Frustum& frustum,
-                      const Renderer* renderer)
+                      const Matrices &m,
+                      Renderer* renderer)
 {
     // Currently, we just skip rendering an atmosphere when there are no
     // light sources, even though the atmosphere would still the light
@@ -644,22 +648,21 @@ renderAtmosphere_GLSL(const RenderInfo& ri,
         prog->setEclipseShadowParameters(ls, radius, planetOrientation);
 #endif
 
-    glPushMatrix();
-    glScalef(atmScale, atmScale, atmScale);
+    prog->MVPMatrix = (*m.projection) * (*m.modelview) * vecgl::scale(atmScale);
+
     glFrontFace(GL_CW);
-    glEnable(GL_BLEND);
-    glDepthMask(GL_FALSE);
-    glBlendFunc(GL_ONE, GL_SRC_ALPHA);
+    renderer->enableBlending();
+    renderer->disableDepthMask();
+    renderer->setBlendingFactors(GL_ONE, GL_SRC_ALPHA);
 
     g_lodSphere->render(LODSphereMesh::Normals,
                         frustum,
                         ri.pixWidth,
                         nullptr);
 
-    glDisable(GL_BLEND);
-    glDepthMask(GL_TRUE);
+    renderer->disableBlending();
+    renderer->enableDepthMask();
     glFrontFace(GL_CCW);
-    glPopMatrix();
     glUseProgram(0);
 }
 
@@ -760,7 +763,8 @@ void renderRings_GLSL(RingSystem& rings,
                       unsigned int textureResolution,
                       bool renderShadow,
                       float segmentSizeInPixels,
-                      const Renderer* renderer)
+                      const Matrices &m,
+                      Renderer* renderer)
 {
     float inner = rings.innerRadius / planetRadius;
     float outer = rings.outerRadius / planetRadius;
@@ -790,6 +794,7 @@ void renderRings_GLSL(RingSystem& rings,
         return;
 
     prog->use();
+    prog->MVPMatrix = (*m.projection) * (*m.modelview);
 
     prog->eyePosition = ls.eyePos_obj;
     prog->ambientColor = ri.ambientColor.toVector3();
@@ -856,14 +861,14 @@ void renderRings_GLSL(RingSystem& rings,
         prog->shadows[li][0].falloff = bias / r0;
     }
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    renderer->enableBlending();
+    renderer->setBlendingFactors(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     if (ringsTex != nullptr)
         ringsTex->bind();
 
     if (rings.renderData == nullptr)
-        rings.renderData = make_shared<GLRingRenderData>();
+        rings.renderData = shared_ptr<GLRingRenderData>(new GLRingRenderData);
     auto data = reinterpret_cast<GLRingRenderData*>(rings.renderData.get());
 
     unsigned nSections = 180;
@@ -877,7 +882,7 @@ void renderRings_GLSL(RingSystem& rings,
     }
     renderRingSystem(&data->vboId[i], inner, outer, nSections);
 
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    renderer->setBlendingFactors(GL_SRC_ALPHA, GL_ONE);
 
     glUseProgram(0);
 }
@@ -906,33 +911,29 @@ Matrix4f directionalLightMatrix(const Vector3f& lightDirection)
 static
 void renderGeometryShadow_GLSL(Geometry* geometry,
                               FramebufferObject* shadowFbo,
-                              const RenderInfo& ri,
                               const LightingState& ls,
                               int lightIndex,
-                              float geometryScale,
-                              const Quaternionf& planetOrientation,
                               double tsec,
-                              const Renderer* renderer,
+                              Renderer* renderer,
                               Eigen::Matrix4f *lightMatrix)
 {
-    glBindTexture(GL_TEXTURE_2D, 0);
+    auto *prog = renderer->getShaderManager().getShader("depth");
+    if (prog == nullptr)
+        return;
+
     shadowFbo->bind();
     glViewport(0, 0, shadowFbo->width(), shadowFbo->height());
 
     // Write only to the depth buffer
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-    glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
+    renderer->enableDepthMask();
+    renderer->enableDepthTest();
     glClear(GL_DEPTH_BUFFER_BIT);
-
     // Render backfaces only in order to reduce self-shadowing artifacts
     glCullFace(GL_FRONT);
 
     Shadow_RenderContext rc(renderer);
 
-    auto *prog = renderer->getShaderManager().getShader("depth");
-    if (prog == nullptr)
-        return;
     prog->use();
 
     // Enable poligon offset to decrease "shadow acne"
