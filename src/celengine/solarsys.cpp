@@ -809,7 +809,7 @@ static Body* CreateBody(const string& name,
     double t;
     if (planetData->getNumber("Albedo", t))
     {
-        fmt::fprintf(cerr, "Deprecated parameter Albedo used in %s definition.\nUse GeomAlbedo instead.\n", name);
+        DPRINTF(LOG_LEVEL_WARNING, "Deprecated parameter Albedo used in %s definition.\nUse GeomAlbedo & BondAlbedo instead.\n", name);
         body->setGeomAlbedo((float) t);
     }
 
@@ -1070,6 +1070,13 @@ static Body* CreateReferencePoint(const string& name,
     if (refPointData->getBoolean("Clickable", clickable))
     {
         body->setClickable(clickable);
+    }
+
+    Color orbitColor;
+    if (refPointData->getColor("OrbitColor", orbitColor))
+    {
+        body->setOrbitColorOverridden(true);
+        body->setOrbitColor(orbitColor);
     }
 
     return body;

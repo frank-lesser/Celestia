@@ -1342,8 +1342,6 @@ void Renderer::renderOrbit(const OrbitPathListEntry& orbitPath,
 #ifdef STIPPLED_LINES
     glDisable(GL_LINE_STIPPLE);
 #endif
-
-    glUseProgram(0);
 }
 
 
@@ -1767,6 +1765,9 @@ void Renderer::draw(const Observer& observer,
     glPolygonMode(GL_FRONT_AND_BACK, (GLenum) renderMode);
 #endif
 
+    enableDepthTest();
+    enableDepthMask();
+
     int nIntervals = buildDepthPartitions();
     renderSolarSystemObjects(observer, nIntervals, now);
 
@@ -1822,7 +1823,6 @@ void renderPoint(const Renderer &renderer,
         glDisable(GL_VERTEX_PROGRAM_POINT_SIZE);
     glDisable(GL_POINT_SPRITE);
 #endif
-    glUseProgram(0);
 }
 
 // If the an object occupies a pixel or less of screen space, we don't
@@ -1926,8 +1926,6 @@ void Renderer::renderObjectAsPoint(const Vector3f& position,
             gaussianGlareTex->bind();
             renderPoint(*this, position, {color, glareAlpha}, glareSize, true, m);
         }
-
-        disableDepthTest();
     }
 }
 
@@ -2217,7 +2215,6 @@ void Renderer::renderEllipsoidAtmosphere(const Atmosphere& atmosphere,
 
     glDisableVertexAttribArray(CelestiaGLProgram::ColorAttributeIndex);
     glDisableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
-    glUseProgram(0);
 }
 
 
@@ -2262,8 +2259,6 @@ static void renderSphereUnlit(const RenderInfo& ri,
     prog->nightLightScale = ri.nightLightScale;
 #endif
     g_lodSphere->render(frustum, ri.pixWidth, textures, nTextures);
-
-    glUseProgram(0);
 }
 
 
@@ -2287,8 +2282,6 @@ static void renderCloudsUnlit(const RenderInfo& ri,
     prog->textureOffset = cloudTexOffset;
 
     g_lodSphere->render(frustum, ri.pixWidth, &cloudTex, 1);
-
-    glUseProgram(0);
 }
 
 void
@@ -2846,12 +2839,6 @@ void Renderer::renderObject(const Vector3f& pos,
                                           astro::daysToSecs(now - astro::J2000),
                                           mvp, this);
             }
-
-            for (unsigned int i = 0; i < 8;/*context->getMaxTextures();*/ i++)
-            {
-                glActiveTexture(GL_TEXTURE0 + i);
-                glBindTexture(GL_TEXTURE_2D, 0);
-            }
             glActiveTexture(GL_TEXTURE0);
         }
     }
@@ -2997,8 +2984,6 @@ void Renderer::renderObject(const Vector3f& pos,
         }
     }
 
-    disableDepthTest();
-    disableDepthMask();
     enableBlending();
 }
 
@@ -3401,16 +3386,10 @@ void Renderer::renderPlanet(Body& body,
             cityRep        = MarkerRepresentation(MarkerRepresentation::X,        3.0f, LocationLabelColor);
             genericLocationRep = MarkerRepresentation(MarkerRepresentation::Square, 8.0f, LocationLabelColor);
 
-            enableDepthTest();
-            disableDepthMask();
-            disableBlending();
-
             // We need a double precision body-relative position of the
             // observer, otherwise location labels will tend to jitter.
             Vector3d posd = body.getPosition(observer.getTime()).offsetFromKm(observer.getPosition());
             locationsToAnnotations(body, posd, q);
-
-            disableDepthTest();
         }
     }
 
@@ -3681,6 +3660,7 @@ void Renderer::renderCometTail(const Body& body,
         }
     }
 
+    disableDepthTest();
     disableDepthMask();
     glDisable(GL_CULL_FACE);
     enableBlending();
@@ -3728,7 +3708,6 @@ void Renderer::renderCometTail(const Body& body,
     if (brightness != -1)
         glDisableVertexAttribArray(brightness);
     glEnable(GL_CULL_FACE);
-    glUseProgram(0);
 
 #ifdef DEBUG_COMET_TAIL
     glColor4f(0.0f, 1.0f, 1.0f, 0.5f);
@@ -3738,6 +3717,8 @@ void Renderer::renderCometTail(const Body& body,
     glDisableClientState(GL_VERTEX_ARRAY);
     enableBlending();
 #endif
+    enableDepthTest();
+    enableDepthMask();
 }
 
 
@@ -4453,9 +4434,9 @@ void Renderer::renderPointStars(const StarDatabase& starDB,
 {
 #ifndef GL_ES
     // Disable multisample rendering when drawing point stars
-    bool toggleAA = (starStyle == Renderer::PointStars && glIsEnabled(GL_MULTISAMPLE));
+    bool toggleAA = (starStyle == Renderer::PointStars && isMSAAEnabled());
     if (toggleAA)
-        glDisable(GL_MULTISAMPLE);
+        disableMSAA();
 #endif
 
     Vector3d obsPos = observer.getPosition().toLy();
@@ -4550,7 +4531,7 @@ void Renderer::renderPointStars(const StarDatabase& starDB,
 
 #ifndef GL_ES
     if (toggleAA)
-        glEnable(GL_MULTISAMPLE);
+        enableMSAA();
 #endif
 }
 
@@ -4798,7 +4779,6 @@ void Renderer::renderParticles(const vector<Particle>& particles)
 
     glDisableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
     glDisableVertexAttribArray(CelestiaGLProgram::PointSizeAttributeIndex);
-    glUseProgram(0);
 #ifndef GL_ES
     glDisable(GL_POINT_SPRITE);
 #endif
@@ -5406,7 +5386,6 @@ void Renderer::drawRectangle(const Rect &r, const Matrix4f &mvp)
             glLineWidth(1.0f);
     }
 
-    glUseProgram(0);
     glDisableVertexAttribArray(CelestiaGLProgram::ColorAttributeIndex);
     glDisableVertexAttribArray(CelestiaGLProgram::TextureCoord0AttributeIndex);
     glDisableVertexAttribArray(CelestiaGLProgram::VertexCoordAttributeIndex);
@@ -6037,7 +6016,6 @@ Renderer::renderSolarSystemObjects(const Observer &observer,
         // Render orbit paths
         if (!orbitPathList.empty())
         {
-            enableDepthTest();
             disableDepthMask();
 #ifdef USE_HDR
             setBlendingFactors(GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA);
@@ -6067,7 +6045,6 @@ Renderer::renderSolarSystemObjects(const Observer &observer,
             }
 
             disableSmoothLines();
-            disableDepthMask();
         }
 
         // Render transparent objects in the second pass
@@ -6088,7 +6065,6 @@ Renderer::renderSolarSystemObjects(const Observer &observer,
                                              FontNormal);
         endObjectAnnotations();
         disableSmoothLines();
-        disableDepthTest();
     }
 
     // reset the depth range

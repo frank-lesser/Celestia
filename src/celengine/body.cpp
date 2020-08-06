@@ -360,11 +360,30 @@ float Body::getTemperature(double time) const
     if (sun == nullptr)
         return 0;
 
-    double distFromSun = getAstrocentricPosition(time).norm();
-    return getTempDiscrepancy() +
-           sun->getTemperature() *
-           (float) (::pow(1.0 - getBondAlbedo(), 0.25) *
-           sqrt(sun->getRadius() / (2.0 * distFromSun)));
+    float temp = 0.0f;
+    if (sun->getVisibility()) // the sun is a star
+    {
+        float distFromSun = (float)getAstrocentricPosition(time).norm();
+        temp = sun->getTemperature() *
+               pow(1.0f - getBondAlbedo(), 0.25f) *
+               sqrt(sun->getRadius() / (2.0f * distFromSun));
+    }
+    else // the sun is a barycenter
+    {
+        if (sun->getOrbitingStars() == nullptr)
+            return 0;
+
+        const UniversalCoord bodyPos = getPosition(time);
+        float flux = 0.0;
+        for (const auto *s : *sun->getOrbitingStars())
+        {
+            float distFromSun = (float)s->getPosition(time).distanceFromKm(bodyPos);
+            float lum = square(s->getRadius()) * pow(s->getTemperature(), 4.0f);
+            flux += lum / square(distFromSun);
+        }
+        temp = (float) pow((1.0f - getBondAlbedo()) * flux, 0.25f) / sqrt(2.0f);
+    }
+    return getTempDiscrepancy() + temp;
 }
 
 
@@ -858,12 +877,12 @@ int Body::getOrbitClassification() const
         return Planet;
     if ((orbitClass & DwarfPlanet) != 0)
         return DwarfPlanet;
+    if ((orbitClass & Asteroid) != 0)
+        return Asteroid;
     if ((orbitClass & Moon) != 0)
         return Moon;
     if ((orbitClass & MinorMoon) != 0)
         return MinorMoon;
-    if ((orbitClass & Asteroid) != 0)
-        return Asteroid;
     if ((orbitClass & Spacecraft) != 0)
         return Spacecraft;
     return Invisible;
